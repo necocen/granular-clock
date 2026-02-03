@@ -14,7 +14,7 @@ pub struct ParticleMeshes {
 /// コンテナ用のメッシュエンティティ
 #[derive(Resource)]
 pub struct ContainerEntities {
-    pub walls: Entity,
+    pub floor: Entity,
     pub divider: Entity,
 }
 
@@ -36,11 +36,11 @@ pub struct SimulationConfig {
 impl Default for SimulationConfig {
     fn default() -> Self {
         Self {
-            large_radius: 0.02,  // 2 cm
-            small_radius: 0.008, // 8 mm
+            large_radius: 0.01,  // 10 mm
+            small_radius: 0.004, // 4 mm
             density: 2500.0,     // kg/m^3
-            num_large: 150,
-            num_small: 300,
+            num_large: 250,
+            num_small: 1500,
         }
     }
 }
@@ -77,9 +77,16 @@ pub fn setup_rendering(
         small_material,
     });
 
-    // コンテナのメッシュを作成（より透明に）
+    // 壁用マテリアル（とても透明）
     let wall_material = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.5, 0.5, 0.5, 0.1),
+        base_color: Color::srgba(0.5, 0.5, 0.5, 0.05),
+        alpha_mode: AlphaMode::Blend,
+        ..default()
+    });
+
+    // 床用マテリアル（やや透明、でも見える）
+    let floor_material = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.4, 0.35, 0.3, 0.4),
         alpha_mode: AlphaMode::Blend,
         ..default()
     });
@@ -90,13 +97,22 @@ pub fn setup_rendering(
         0.005,
         container.half_extents.z * 2.0,
     ));
-    commands.spawn((
-        Mesh3d(floor_mesh),
-        MeshMaterial3d(wall_material.clone()),
-        Transform::from_translation(
-            container.base_position - Vec3::Y * container.half_extents.y,
-        ),
-    ));
+    let floor = commands
+        .spawn((
+            Mesh3d(floor_mesh),
+            MeshMaterial3d(floor_material),
+            Transform::from_translation(
+                container.base_position - Vec3::Y * container.half_extents.y,
+            ),
+        ))
+        .id();
+
+    // 仕切り用マテリアル（やや不透明）
+    let divider_material = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.4, 0.4, 0.4, 0.6),
+        alpha_mode: AlphaMode::Blend,
+        ..default()
+    });
 
     // 仕切り
     let divider_mesh = meshes.add(Cuboid::new(
@@ -104,11 +120,6 @@ pub fn setup_rendering(
         container.divider_height,
         container.half_extents.z * 2.0,
     ));
-    let divider_material = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.3, 0.3, 0.3, 0.2),
-        alpha_mode: AlphaMode::Blend,
-        ..default()
-    });
     let divider = commands
         .spawn((
             Mesh3d(divider_mesh),
@@ -166,17 +177,15 @@ pub fn setup_rendering(
     ));
 
     // 右壁
-    let walls = commands
-        .spawn((
-            Mesh3d(left_right_mesh),
-            MeshMaterial3d(wall_material),
-            Transform::from_translation(
-                container.base_position + Vec3::X * container.half_extents.x,
-            ),
-        ))
-        .id();
+    commands.spawn((
+        Mesh3d(left_right_mesh),
+        MeshMaterial3d(wall_material),
+        Transform::from_translation(
+            container.base_position + Vec3::X * container.half_extents.x,
+        ),
+    ));
 
-    commands.insert_resource(ContainerEntities { walls, divider });
+    commands.insert_resource(ContainerEntities { floor, divider });
 }
 
 /// 粒子をスポーン
@@ -247,6 +256,13 @@ pub fn update_container_transforms(
     };
 
     let offset = Vec3::Y * container.current_offset;
+
+    // 床を更新
+    if let Ok(mut transform) = transforms.get_mut(entities.floor) {
+        transform.translation = container.base_position
+            - Vec3::Y * container.half_extents.y
+            + offset;
+    }
 
     // 仕切りを更新
     if let Ok(mut transform) = transforms.get_mut(entities.divider) {

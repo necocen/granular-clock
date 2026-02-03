@@ -13,7 +13,7 @@ impl Default for SimulationTime {
     fn default() -> Self {
         Self {
             elapsed: 0.0,
-            dt: 1.0 / 2000.0, // 2000Hz相当の細かいタイムステップ
+            dt: 1.0 / 5000.0, // 5000Hz相当の細かいタイムステップ
         }
     }
 }

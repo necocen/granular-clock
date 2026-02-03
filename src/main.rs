@@ -23,7 +23,7 @@ use ui::{
     handle_amplitude_buttons, handle_control_buttons, handle_frequency_buttons,
     handle_oscillation_toggle, handle_reset, setup_bevy_ui_controls,
     setup_distribution_graph, update_button_colors, update_distribution_display,
-    update_graph_lines, SimulationState,
+    update_graph_lines, update_simulation_time_display, SimulationState,
 };
 
 fn main() {
@@ -44,7 +44,7 @@ fn main() {
         .insert_resource(PhysicsConstants::default())
         .insert_resource(MaterialProperties::default())
         .insert_resource(WallProperties::default())
-        .insert_resource(SpatialHashGrid::new(0.05, 4096))
+        .insert_resource(SpatialHashGrid::new(0.05, 4096)) // セルサイズは粒子の最大直径以上
         .insert_resource(ContactHistory::default())
         .insert_resource(DistributionHistory::default())
         .insert_resource(CurrentDistribution::default())
@@ -74,5 +74,6 @@ fn main() {
         .add_systems(Update, update_button_colors)
         .add_systems(Update, update_distribution_display)
         .add_systems(Update, update_graph_lines)
+        .add_systems(Update, update_simulation_time_display)
         .run();
 }

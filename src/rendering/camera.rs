@@ -16,7 +16,7 @@ pub fn setup_camera(mut commands: Commands) {
         MainCamera,
         Camera3d::default(),
         FreeCamera::default(),
-        Transform::from_xyz(1.3, 1.0, 1.3).looking_at(Vec3::new(0.0, 0.4, 0.0), Vec3::Y),
+        Transform::from_xyz(0.65, 0.5, 0.65).looking_at(Vec3::new(0.0, 0.075, 0.0), Vec3::Y),
     ));
 
     // 環境光

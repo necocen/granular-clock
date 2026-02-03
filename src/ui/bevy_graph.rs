@@ -28,7 +28,7 @@ pub struct GraphLine {
 
 const GRAPH_WIDTH: f32 = 380.0;
 const GRAPH_HEIGHT: f32 = 150.0;
-const MAX_POINTS: usize = 200;
+const MAX_POINTS: usize = 600; // 600サンプル x 0.5秒 = 300秒（5分）分
 
 /// Setup distribution graph panel
 pub fn setup_distribution_graph(mut commands: Commands) {

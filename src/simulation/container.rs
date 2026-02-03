@@ -18,10 +18,10 @@ pub struct Container {
 impl Default for Container {
     fn default() -> Self {
         Self {
-            half_extents: Vec3::new(0.3, 0.4, 0.2), // 60x80x40 cm（大幅に拡大）
-            divider_height: 0.15,                   // 15 cm
-            divider_thickness: 0.01,                // 1 cm
-            base_position: Vec3::new(0.0, 0.4, 0.0), // 中心がY=0.4m
+            half_extents: Vec3::new(0.2, 0.25, 0.1), // 40x50x20 cm（大幅に拡大）
+            divider_height: 0.04,                   // 4 cm
+            divider_thickness: 0.005,                // 0.5 cm
+            base_position: Vec3::new(0.0, 0.075, 0.0), // 中心がY=0.075m
             current_offset: 0.0,
         }
     }

@@ -44,6 +44,17 @@ pub fn setup_bevy_ui_controls(mut commands: Commands) {
                 TextColor(Color::WHITE),
             ));
 
+            // Simulation time display
+            parent.spawn((
+                SimulationTimeText,
+                Text::new("Time: 0.0 s"),
+                TextFont {
+                    font_size: 14.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.8, 0.8, 0.2)),
+            ));
+
             // Oscillation toggle
             parent
                 .spawn(Node {
@@ -92,7 +103,7 @@ pub fn setup_bevy_ui_controls(mut commands: Commands) {
             // Amplitude
             parent.spawn((
                 AmplitudeText,
-                Text::new("Amplitude: 0.005 m"),
+                Text::new("Amplitude: 0.05 m"),
                 TextFont {
                     font_size: 14.0,
                     ..default()
@@ -274,6 +285,20 @@ pub struct PauseButtonText;
 #[derive(Component)]
 pub struct ResetButton;
 
+#[derive(Component)]
+pub struct SimulationTimeText;
+
+/// シミュレーション時間の表示を更新
+pub fn update_simulation_time_display(
+    sim_time: Res<SimulationTime>,
+    mut time_text: Query<&mut Text, With<SimulationTimeText>>,
+) {
+    if let Ok(mut text) = time_text.single_mut() {
+        let elapsed = sim_time.elapsed;
+        text.0 = format!("Time: {:.1} s", elapsed);
+    }
+}
+
 pub fn handle_oscillation_toggle(
     interaction: Query<&Interaction, (With<OscillationToggleButton>, Changed<Interaction>)>,
     mut toggle_btn: Query<
@@ -320,7 +345,7 @@ pub fn handle_amplitude_buttons(
 
     if let Ok(int) = up_btn.single() {
         if *int == Interaction::Pressed {
-            osc_params.amplitude = (osc_params.amplitude + 0.001).min(0.02);
+            osc_params.amplitude = (osc_params.amplitude + 0.001).min(0.1);
             changed = true;
         }
     }

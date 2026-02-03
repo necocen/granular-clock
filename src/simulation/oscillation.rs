@@ -19,7 +19,7 @@ pub struct OscillationParams {
 impl Default for OscillationParams {
     fn default() -> Self {
         Self {
-            amplitude: 0.025, // 25 mm（非常に穏やかな振動）
+            amplitude: 0.03, // 30 mm（非常に穏やかな振動）
             frequency: 5.0,   // 5 Hz（低周波）
             phase: 0.0,
             enabled: true,

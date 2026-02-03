@@ -15,21 +15,27 @@ pub struct DistributionHistory {
     pub left_small_ratio: VecDeque<f64>,
     /// 最大サンプル数
     pub max_samples: usize,
+    /// サンプリング間隔（秒）
+    pub sample_interval: f64,
+    /// 最後のサンプル時刻
+    pub last_sample_time: f64,
 }
 
 impl Default for DistributionHistory {
     fn default() -> Self {
-        Self::new(1000)
+        Self::new(600, 0.5) // 600サンプル x 0.5秒 = 300秒（5分）分
     }
 }
 
 impl DistributionHistory {
-    pub fn new(max_samples: usize) -> Self {
+    pub fn new(max_samples: usize, sample_interval: f64) -> Self {
         Self {
             timestamps: VecDeque::with_capacity(max_samples),
             left_large_ratio: VecDeque::with_capacity(max_samples),
             left_small_ratio: VecDeque::with_capacity(max_samples),
             max_samples,
+            sample_interval,
+            last_sample_time: -1.0,
         }
     }
 
@@ -37,6 +43,7 @@ impl DistributionHistory {
         self.timestamps.clear();
         self.left_large_ratio.clear();
         self.left_small_ratio.clear();
+        self.last_sample_time = -1.0;
     }
 }
 
@@ -108,12 +115,17 @@ pub fn update_distribution(
         }
     }
 
-    // 履歴を更新
+    // 履歴を更新（サンプリング間隔を考慮）
     let total_large = current.total_large();
     let total_small = current.total_small();
+    let elapsed = sim_time.elapsed;
 
-    if total_large > 0 || total_small > 0 {
-        history.timestamps.push_back(sim_time.elapsed);
+    // サンプリング間隔が経過した場合のみ記録
+    if (total_large > 0 || total_small > 0)
+        && (elapsed - history.last_sample_time >= history.sample_interval)
+    {
+        history.last_sample_time = elapsed;
+        history.timestamps.push_back(elapsed);
         history
             .left_large_ratio
             .push_back(current.left_large_ratio());

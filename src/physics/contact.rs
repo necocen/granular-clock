@@ -2,12 +2,15 @@ use bevy::prelude::*;
 use std::collections::HashMap;
 use std::f32::consts::PI;
 
-/// 接触履歴（Mindlin接線力の計算に必要）
+/// 接触履歴
+/// 注: 現在は正規化Coulomb摩擦モデルを使用しており、
+/// tangential_displacement と rolling_displacement は未使用
 #[derive(Default, Clone)]
+#[allow(dead_code)]
 pub struct ContactState {
-    /// 接線方向の累積変位
+    /// 接線方向の累積変位（現在未使用）
     pub tangential_displacement: Vec3,
-    /// 転がり方向の累積変位
+    /// 転がり方向の累積変位（現在未使用）
     pub rolling_displacement: Vec3,
     /// 最後の法線方向
     pub last_normal: Vec3,
@@ -66,7 +69,7 @@ pub struct MaterialProperties {
 impl Default for MaterialProperties {
     fn default() -> Self {
         Self {
-            youngs_modulus: 1e5, // 数値安定性のため大幅に下げる
+            youngs_modulus: 1e6, // 100kPa（柔らかめに設定）
             poisson_ratio: 0.25,
             restitution: 0.5,
             friction: 0.5,
@@ -106,7 +109,7 @@ pub fn compute_particle_contact_force(
     mass_j: f32,
     material: &MaterialProperties,
     contact_state: &mut ContactState,
-    dt: f32,
+    _dt: f32,
 ) -> (ContactForce, ContactForce) {
     let delta_pos = pos_i - pos_j;
     let dist = delta_pos.length();
@@ -125,8 +128,8 @@ pub fn compute_particle_contact_force(
     // 有効パラメータ
     let r_eff = (radius_i * radius_j) / (radius_i + radius_j);
 
-    // オーバーラップを制限して数値安定性を確保
-    let max_overlap = r_eff * 0.5;
+    // オーバーラップを制限して数値安定性を確保（貫通を減らすため厳しく制限）
+    let max_overlap = r_eff * 0.2;
     let overlap = overlap.min(max_overlap);
     let m_eff = (mass_i * mass_j) / (mass_i + mass_j);
     let e_eff =
@@ -145,55 +148,65 @@ pub fn compute_particle_contact_force(
     // 相対速度
     let v_rel = vel_i - vel_j;
     let v_n = v_rel.dot(n);
-    let f_n_damping = -gamma_n * v_n;
 
-    // 法線力（引力にならないようにクランプ）
+    // 非対称減衰：接近中（v_n < 0）のみ減衰を適用
+    // 離反中（v_n > 0）は減衰なし - バネ力のみで押し出す
+    // これにより、反発係数が正しく実現され、エネルギーが増加しない
+    let f_n_damping = if v_n < 0.0 {
+        // 接近中: -gamma * v_n は正（v_nが負なので）
+        -gamma_n * v_n
+    } else {
+        // 離反中: 減衰なし
+        0.0
+    };
+
+    // 法線力（引力にならないようにクランプ、通常は不要だが安全のため）
     let f_n_total = (f_n_elastic + f_n_damping).max(0.0);
     let f_n_vec = f_n_total * n;
 
     // 接触点での相対速度（回転を考慮）
     let v_t = v_rel - v_n * n - omega_i.cross(radius_i * n) + omega_j.cross(radius_j * n);
 
-    // 接線変位の更新
-    contact_state.tangential_displacement += v_t * dt;
-    // 接触面内に射影
-    contact_state.tangential_displacement -=
-        contact_state.tangential_displacement.dot(n) * n;
     contact_state.last_normal = n;
 
-    // 接線剛性
-    let g_eff = material.youngs_modulus
-        / (4.0 * (2.0 - material.poisson_ratio) * (1.0 + material.poisson_ratio));
-    let k_t = 8.0 * g_eff * (r_eff * overlap).sqrt();
-
-    // 接線力（Coulomb摩擦でクランプ）
-    let f_t_elastic = -k_t * contact_state.tangential_displacement;
+    // 正規化Coulomb摩擦モデル（エネルギー保存のため）
+    // バネベースのMindlinモデルは k_t が overlap に依存するため
+    // overlap が変化するとエネルギーが保存されない問題があった
+    // 代わりに純粋な粘性摩擦 + Coulomb限界を使用
     let f_t_max = material.friction * f_n_elastic;
+    let v_t_mag = v_t.length();
 
-    let f_t_vec = if f_t_elastic.length() > f_t_max {
-        let direction = f_t_elastic.normalize_or_zero();
-        // すべりが発生：変位をリセット
-        contact_state.tangential_displacement = -direction * f_t_max / k_t;
-        -direction * f_t_max
+    let f_t_vec = if v_t_mag > 1e-10 {
+        let v_t_dir = v_t / v_t_mag;
+        // 正規化速度（特性速度でスケール）
+        // 低速域では粘性摩擦、高速域ではCoulomb摩擦
+        // v_char を大きくして粘性摩擦を緩やかにする
+        let v_char = 0.1; // 特性速度 10cm/s
+        let viscous_coeff = f_t_max / v_char;
+        let f_viscous = viscous_coeff * v_t_mag;
+        // Coulomb限界でクランプ
+        let f_t = f_viscous.min(f_t_max);
+        -f_t * v_t_dir
     } else {
-        f_t_elastic
+        Vec3::ZERO
     };
 
-    // 転がり抵抗
+    // 転がり抵抗（同様に粘性モデルに変更）
     let omega_rel = omega_i - omega_j;
     let omega_roll = omega_rel - omega_rel.dot(n) * n;
-    contact_state.rolling_displacement += omega_roll * dt * r_eff;
+    let omega_roll_mag = omega_roll.length();
 
-    let k_r = k_n * r_eff * r_eff;
-    let t_r_elastic = -k_r * contact_state.rolling_displacement;
     let t_r_max = material.rolling_friction * f_n_elastic * r_eff;
-
-    let t_r_vec = if t_r_elastic.length() > t_r_max {
-        let direction = t_r_elastic.normalize_or_zero();
-        contact_state.rolling_displacement = -direction * t_r_max / k_r;
-        -direction * t_r_max
+    let t_r_vec = if omega_roll_mag > 1e-10 {
+        let omega_roll_dir = omega_roll / omega_roll_mag;
+        // 特性角速度でスケール（大きくして緩やかに）
+        let omega_char = 10.0; // rad/s
+        let viscous_coeff = t_r_max / omega_char;
+        let t_viscous = viscous_coeff * omega_roll_mag;
+        let t_r = t_viscous.min(t_r_max);
+        -t_r * omega_roll_dir
     } else {
-        t_r_elastic
+        Vec3::ZERO
     };
 
     // 粒子iに作用する力とトルク
