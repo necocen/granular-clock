@@ -14,14 +14,14 @@ use crate::physics::{
     AngularVelocity, MaterialProperties, ParticleProperties, ParticleSize, PhysicsConstants,
     Position, Velocity,
 };
-use crate::simulation::{Container, SimulationTime};
+use crate::simulation::{Container, PhysicsBackend, SimulationTime};
 use crate::ui::SimulationState;
 
 use super::{
     buffers::{GpuPhysicsBuffers, ParticleGpu, SimulationParams},
     node::{GpuPhysicsLabel, GpuPhysicsNode},
     pipeline::GpuPhysicsPipelines,
-    readback::{GpuReadbackBuffer, ReadbackStaging},
+    readback::{GpuReadbackBuffer, ReadbackSettings, ReadbackStaging},
 };
 use crate::physics::GridSettings;
 
@@ -89,6 +89,7 @@ impl Plugin for GpuPhysicsPlugin {
             .insert_resource(GpuPhysicsEnabled(true))
             .insert_resource(ExtractedContainerParams::default())
             .insert_resource(GridSettings::default())
+            .insert_resource(ReadbackSettings::default())
             .insert_resource(readback_buffer)
             .add_plugins(ExtractResourcePlugin::<GpuParticleData>::default())
             .add_plugins(ExtractResourcePlugin::<ExtractedContainerParams>::default())
@@ -163,12 +164,16 @@ fn extract_particle_data(
     material: Res<MaterialProperties>,
     physics: Res<PhysicsConstants>,
     grid_settings: Res<GridSettings>,
+    backend: Res<PhysicsBackend>,
     mut gpu_data: ResMut<GpuParticleData>,
 ) {
     // Added<Position> がある = 新しい粒子がスポーンされた（Reset含む）
     // apply_gpu_results による Position の変更では Added はトリガーされない
     let has_new_particles = !added_particles.is_empty();
-    if gpu_data.initialized && !has_new_particles {
+    // CPU→GPU 切り替え時は現在の ECS 状態を GPU バッファに反映する
+    let backend_switched_to_gpu =
+        backend.is_changed() && *backend == PhysicsBackend::Gpu;
+    if gpu_data.initialized && !has_new_particles && !backend_switched_to_gpu {
         return;
     }
 
@@ -322,12 +327,13 @@ fn update_params_only(
     render_queue.write_buffer(&buffers.params, 0, params_bytes);
 }
 
-/// GPU 出力をステージングバッファにコピー
+/// GPU 出力をステージングバッファにコピー（N フレームに1回）
 fn copy_to_staging(
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
     buffers: Option<Res<GpuPhysicsBuffers>>,
     mut staging: Option<ResMut<ReadbackStaging>>,
+    settings: Option<Res<ReadbackSettings>>,
 ) {
     let Some(buffers) = buffers else {
         return;
@@ -339,6 +345,14 @@ fn copy_to_staging(
     if buffers.num_particles == 0 || staging.mapping_requested {
         return;
     }
+
+    // フレームカウンタをインクリメントし、interval に達したかチェック
+    let interval = settings.map(|s| s.interval).unwrap_or(1);
+    staging.frame_counter += 1;
+    if staging.frame_counter < interval {
+        return; // まだ readback のタイミングではない
+    }
+    staging.frame_counter = 0; // カウンタをリセット
 
     let particle_size = std::mem::size_of::<ParticleGpu>() as u64;
     let copy_size = particle_size * buffers.num_particles as u64;

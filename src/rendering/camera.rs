@@ -1,5 +1,6 @@
 use bevy::camera_controller::free_camera::{FreeCamera, FreeCameraPlugin};
 use bevy::prelude::*;
+use bevy::render::view::NoIndirectDrawing;
 
 /// メインカメラのマーカー
 #[derive(Component)]
@@ -17,6 +18,7 @@ pub fn setup_camera(mut commands: Commands) {
         Camera3d::default(),
         FreeCamera::default(),
         Transform::from_xyz(0.65, 0.5, 0.65).looking_at(Vec3::new(0.0, 0.075, 0.0), Vec3::Y),
+        NoIndirectDrawing,
     ));
 
     // 環境光

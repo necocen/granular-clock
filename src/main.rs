@@ -24,8 +24,8 @@ use physics::{
     WallProperties,
 };
 use rendering::{
-    camera_plugin, setup_camera, setup_rendering, spawn_particles, sync_transforms,
-    update_container_transforms, SimulationConfig,
+    camera_plugin, hide_particle_entities, setup_camera, setup_rendering, spawn_particles,
+    update_container_transforms, GpuInstancingPlugin, SimulationConfig,
 };
 use simulation::{
     run_physics_substeps, update_oscillation, Container, OscillationParams, PhysicsBackend,
@@ -51,6 +51,7 @@ fn main() {
         }))
         .add_plugins(camera_plugin())
         .add_plugins(GpuPhysicsPlugin)
+        .add_plugins(GpuInstancingPlugin)
         // リソース
         .insert_resource(SimulationConfig::default())
         .insert_resource(Container::default())
@@ -82,8 +83,8 @@ fn main() {
         )
         // 振動
         .add_systems(Update, update_oscillation)
-        // 更新システム
-        .add_systems(Update, sync_transforms)
+        // 個別パーティクルを非表示（インスタンシングで描画）
+        .add_systems(Update, hide_particle_entities)
         .add_systems(Update, update_container_transforms)
         .add_systems(Update, update_distribution)
         .add_systems(Update, handle_reset)

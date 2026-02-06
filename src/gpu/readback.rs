@@ -35,6 +35,21 @@ impl Default for GpuReadbackBuffer {
     }
 }
 
+/// Readback の頻度設定
+#[derive(Resource, Clone, Copy)]
+pub struct ReadbackSettings {
+    /// 何フレームに1回 readback するか（1 = 毎フレーム、4 = 4フレームに1回）
+    pub interval: u32,
+}
+
+impl Default for ReadbackSettings {
+    fn default() -> Self {
+        Self {
+            interval: 4, // デフォルトは4フレームに1回
+        }
+    }
+}
+
 /// Render World 用のステージングバッファ
 #[derive(Resource)]
 pub struct ReadbackStaging {
@@ -48,6 +63,8 @@ pub struct ReadbackStaging {
     pub mapping_complete: Arc<AtomicBool>,
     /// 粒子数
     pub num_particles: u32,
+    /// フレームカウンタ（readback 頻度制御用）
+    pub frame_counter: u32,
 }
 
 impl ReadbackStaging {
@@ -68,6 +85,7 @@ impl ReadbackStaging {
             mapping_requested: false,
             mapping_complete: Arc::new(AtomicBool::new(false)),
             num_particles,
+            frame_counter: 0,
         }
     }
 }
