@@ -4,7 +4,7 @@ use bevy::ui::Checked;
 use crate::analysis::DistributionHistory;
 use crate::physics::{ParticleBundle, ParticleSize, Position};
 use crate::rendering::{ParticleMeshes, SimulationConfig};
-use crate::simulation::{Container, OscillationParams, SimulationTime};
+use crate::simulation::{Container, OscillationParams, PhysicsBackend, SimulationTime};
 
 /// シミュレーションの状態
 #[derive(Resource, Default)]
@@ -92,6 +92,50 @@ pub fn setup_bevy_ui_controls(mut commands: Commands) {
                     });
                     row.spawn((
                         Text::new("Oscillation"),
+                        TextFont {
+                            font_size: 14.0,
+                            ..default()
+                        },
+                        TextColor(Color::WHITE),
+                    ));
+                });
+
+            // Physics backend toggle
+            parent
+                .spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(8.0),
+                    ..default()
+                })
+                .with_children(|row| {
+                    row.spawn((
+                        PhysicsBackendToggleButton,
+                        Button,
+                        Node {
+                            width: Val::Px(60.0),
+                            height: Val::Px(24.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border: UiRect::all(Val::Px(2.0)),
+                            ..default()
+                        },
+                        BorderColor::all(Color::WHITE),
+                        BackgroundColor(Color::srgb(0.2, 0.4, 0.5)),
+                    ))
+                    .with_children(|btn| {
+                        btn.spawn((
+                            PhysicsBackendText,
+                            Text::new("GPU"),
+                            TextFont {
+                                font_size: 12.0,
+                                ..default()
+                            },
+                            TextColor(Color::WHITE),
+                        ));
+                    });
+                    row.spawn((
+                        Text::new("Physics"),
                         TextFont {
                             font_size: 14.0,
                             ..default()
@@ -288,6 +332,12 @@ pub struct ResetButton;
 #[derive(Component)]
 pub struct SimulationTimeText;
 
+#[derive(Component)]
+pub struct PhysicsBackendToggleButton;
+
+#[derive(Component)]
+pub struct PhysicsBackendText;
+
 /// シミュレーション時間の表示を更新
 pub fn update_simulation_time_display(
     sim_time: Res<SimulationTime>,
@@ -330,6 +380,38 @@ pub fn handle_oscillation_toggle(
                         Visibility::Hidden
                     };
                 }
+            }
+        }
+    }
+}
+
+pub fn handle_physics_backend_toggle(
+    interaction: Query<&Interaction, (With<PhysicsBackendToggleButton>, Changed<Interaction>)>,
+    mut toggle_btn: Query<&mut BackgroundColor, With<PhysicsBackendToggleButton>>,
+    mut backend_text: Query<&mut Text, With<PhysicsBackendText>>,
+    mut backend: ResMut<PhysicsBackend>,
+) {
+    if let Ok(int) = interaction.single() {
+        if *int == Interaction::Pressed {
+            // トグル
+            *backend = match *backend {
+                PhysicsBackend::Gpu => PhysicsBackend::Cpu,
+                PhysicsBackend::Cpu => PhysicsBackend::Gpu,
+            };
+
+            // UIを更新
+            if let Ok(mut bg) = toggle_btn.single_mut() {
+                *bg = match *backend {
+                    PhysicsBackend::Gpu => BackgroundColor(Color::srgb(0.2, 0.4, 0.5)),
+                    PhysicsBackend::Cpu => BackgroundColor(Color::srgb(0.5, 0.4, 0.2)),
+                };
+            }
+
+            if let Ok(mut text) = backend_text.single_mut() {
+                text.0 = match *backend {
+                    PhysicsBackend::Gpu => "GPU".to_string(),
+                    PhysicsBackend::Cpu => "CPU".to_string(),
+                };
             }
         }
     }

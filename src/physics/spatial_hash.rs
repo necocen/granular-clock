@@ -2,7 +2,39 @@ use bevy::prelude::*;
 use parking_lot::Mutex;
 use rayon::prelude::*;
 
-/// 空間ハッシュグリッドによる高速な近傍検索
+/// 空間グリッドの設定（CPU/GPU共通）
+#[derive(Resource, Clone, Copy, Debug)]
+pub struct GridSettings {
+    /// セルサイズ（最大粒子直径以上が推奨）
+    pub cell_size: f32,
+    /// ハッシュテーブルサイズ（CPU用、2のべき乗推奨）
+    pub table_size: usize,
+}
+
+impl Default for GridSettings {
+    fn default() -> Self {
+        Self {
+            cell_size: 0.03, // 大粒子直径 0.04 より大きい
+            table_size: 4096,
+        }
+    }
+}
+
+impl GridSettings {
+    /// ワールドサイズからグリッド次元を計算（GPU用）
+    /// world_half: 各軸の半分のサイズ（例: container.half_extents）
+    pub fn compute_grid_dim(&self, world_half: [f32; 3]) -> u32 {
+        // 最大軸のサイズを基準にグリッド次元を計算
+        // 2 * world_half でワールド全体をカバー + マージン
+        let max_extent = world_half[0].max(world_half[1]).max(world_half[2]);
+        let world_size = 2.0 * max_extent * 1.5; // 50%マージン
+        let dim = (world_size / self.cell_size).ceil() as u32;
+        // 最小8、最大64に制限（メモリ効率のため）
+        dim.clamp(8, 64)
+    }
+}
+
+/// 空間ハッシュグリッドによる高速な近傍検索（CPU用）
 #[derive(Resource)]
 pub struct SpatialHashGrid {
     pub cell_size: f32,

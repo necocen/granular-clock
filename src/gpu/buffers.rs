@@ -1,0 +1,242 @@
+use bevy::{
+    prelude::*,
+    render::{render_resource::*, renderer::RenderDevice},
+};
+use bytemuck::{Pod, Zeroable};
+
+/// GPU上の粒子データ構造（16バイトアライメント）
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable, Debug)]
+pub struct ParticleGpu {
+    /// 位置 (12 bytes)
+    pub pos: [f32; 3],
+    /// 半径 (4 bytes) → 16 bytes aligned
+    pub radius: f32,
+    /// 速度 (12 bytes)
+    pub vel: [f32; 3],
+    /// 逆質量 (4 bytes) → 16 bytes aligned
+    pub mass_inv: f32,
+    /// 角速度 (12 bytes)
+    pub omega: [f32; 3],
+    /// 逆慣性モーメント (4 bytes) → 16 bytes aligned
+    pub inertia_inv: f32,
+    /// サイズフラグ (0=small, 1=large) (4 bytes)
+    pub size_flag: u32,
+    /// パディング (12 bytes) → 16 bytes aligned
+    pub _pad: [u32; 3],
+}
+
+impl Default for ParticleGpu {
+    fn default() -> Self {
+        Self {
+            pos: [0.0; 3],
+            radius: 0.01,
+            vel: [0.0; 3],
+            mass_inv: 1.0,
+            omega: [0.0; 3],
+            inertia_inv: 1.0,
+            size_flag: 0,
+            _pad: [0; 3],
+        }
+    }
+}
+
+/// シミュレーションパラメータ（uniform buffer用）
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable, Debug)]
+pub struct SimulationParams {
+    /// タイムステップ
+    pub dt: f32,
+    /// 重力加速度（Y軸、負の値）
+    pub gravity: f32,
+    /// セルサイズ
+    pub cell_size: f32,
+    /// グリッド次元（1軸あたり）
+    pub grid_dim: u32,
+
+    /// ワールド半分サイズ (12 bytes)
+    pub world_half: [f32; 3],
+    /// 粒子数
+    pub num_particles: u32,
+
+    /// ヤング率
+    pub youngs_modulus: f32,
+    /// ポアソン比
+    pub poisson_ratio: f32,
+    /// 反発係数
+    pub restitution: f32,
+    /// 摩擦係数
+    pub friction: f32,
+
+    /// 容器オフセット（振動）
+    pub container_offset: f32,
+    /// 仕切り高さ
+    pub divider_height: f32,
+    /// 容器 half_extents.x
+    pub container_half_x: f32,
+    /// 容器 half_extents.y
+    pub container_half_y: f32,
+
+    /// 容器 half_extents.z
+    pub container_half_z: f32,
+    /// 仕切り厚さ
+    pub divider_thickness: f32,
+    /// 転がり摩擦係数
+    pub rolling_friction: f32,
+    /// パディング
+    pub _pad: f32,
+}
+
+impl Default for SimulationParams {
+    fn default() -> Self {
+        Self {
+            dt: 1.0 / 120.0,
+            gravity: -9.81,
+            cell_size: 0.05,
+            grid_dim: 32,
+            world_half: [0.1, 0.15, 0.05],
+            num_particles: 0,
+            youngs_modulus: 1e6,
+            poisson_ratio: 0.25,
+            restitution: 0.5,
+            friction: 0.5,
+            container_offset: 0.0,
+            divider_height: 0.05,
+            container_half_x: 0.1,
+            container_half_y: 0.15,
+            container_half_z: 0.05,
+            divider_thickness: 0.005,
+            rolling_friction: 0.1,
+            _pad: 0.0,
+        }
+    }
+}
+
+/// セル範囲（ソート後の粒子インデックス範囲）
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable, Debug, Default)]
+pub struct CellRange {
+    pub start: u32,
+    pub end: u32,
+}
+
+/// GPU バッファリソース
+#[derive(Resource)]
+pub struct GpuPhysicsBuffers {
+    /// 粒子データ（入力）
+    pub particles_in: Buffer,
+    /// 粒子データ（出力）
+    pub particles_out: Buffer,
+    /// 空間ハッシュキー
+    pub keys: Buffer,
+    /// 粒子ID（ソート用）
+    pub particle_ids: Buffer,
+    /// セル範囲
+    pub cell_ranges: Buffer,
+    /// 力の累積
+    pub forces: Buffer,
+    /// トルクの累積
+    pub torques: Buffer,
+    /// シミュレーションパラメータ
+    pub params: Buffer,
+    /// 粒子数
+    pub num_particles: u32,
+    /// ping-pong フラグ
+    pub ping_pong: bool,
+    /// 最後にアップロードしたデータ世代
+    pub last_uploaded_generation: u64,
+}
+
+impl GpuPhysicsBuffers {
+    pub fn new(render_device: &RenderDevice, num_particles: u32, grid_size: u32) -> Self {
+        let particle_size = std::mem::size_of::<ParticleGpu>() as u64;
+        let particles_buffer_size = particle_size * num_particles as u64;
+
+        let particles_in = render_device.create_buffer(&BufferDescriptor {
+            label: Some("particles_in"),
+            size: particles_buffer_size,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        let particles_out = render_device.create_buffer(&BufferDescriptor {
+            label: Some("particles_out"),
+            size: particles_buffer_size,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        let keys = render_device.create_buffer(&BufferDescriptor {
+            label: Some("keys"),
+            size: 4 * num_particles as u64,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let particle_ids = render_device.create_buffer(&BufferDescriptor {
+            label: Some("particle_ids"),
+            size: 4 * num_particles as u64,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let num_cells = grid_size * grid_size * grid_size;
+        let cell_ranges = render_device.create_buffer(&BufferDescriptor {
+            label: Some("cell_ranges"),
+            size: std::mem::size_of::<CellRange>() as u64 * num_cells as u64,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let forces = render_device.create_buffer(&BufferDescriptor {
+            label: Some("forces"),
+            size: 16 * num_particles as u64, // vec4<f32> per particle
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let torques = render_device.create_buffer(&BufferDescriptor {
+            label: Some("torques"),
+            size: 16 * num_particles as u64, // vec4<f32> per particle
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let params = render_device.create_buffer(&BufferDescriptor {
+            label: Some("simulation_params"),
+            size: std::mem::size_of::<SimulationParams>() as u64,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        Self {
+            particles_in,
+            particles_out,
+            keys,
+            particle_ids,
+            cell_ranges,
+            forces,
+            torques,
+            params,
+            num_particles,
+            ping_pong: false,
+            last_uploaded_generation: 0,
+        }
+    }
+
+    /// ping-pong バッファを入れ替え
+    pub fn swap(&mut self) {
+        std::mem::swap(&mut self.particles_in, &mut self.particles_out);
+        self.ping_pong = !self.ping_pong;
+    }
+
+    /// 現在の入力バッファを取得
+    pub fn current_input(&self) -> &Buffer {
+        &self.particles_in
+    }
+
+    /// 現在の出力バッファを取得
+    pub fn current_output(&self) -> &Buffer {
+        &self.particles_out
+    }
+}

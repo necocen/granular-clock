@@ -1,0 +1,430 @@
+use bevy::{
+    prelude::*,
+    render::{
+        extract_resource::{ExtractResource, ExtractResourcePlugin},
+        graph::CameraDriverLabel,
+        render_graph::RenderGraph,
+        render_resource::{CommandEncoderDescriptor, MapMode},
+        renderer::{RenderDevice, RenderQueue},
+        Render, RenderApp,
+    },
+};
+
+use crate::physics::{
+    AngularVelocity, MaterialProperties, ParticleProperties, ParticleSize, PhysicsConstants,
+    Position, Velocity,
+};
+use crate::simulation::{Container, SimulationTime};
+use crate::ui::SimulationState;
+
+use super::{
+    buffers::{GpuPhysicsBuffers, ParticleGpu, SimulationParams},
+    node::{GpuPhysicsLabel, GpuPhysicsNode},
+    pipeline::GpuPhysicsPipelines,
+    readback::{GpuReadbackBuffer, ReadbackStaging},
+};
+use crate::physics::GridSettings;
+
+/// GPU 物理が有効かどうかのフラグ
+#[derive(Resource, Clone, Default)]
+pub struct GpuPhysicsEnabled(pub bool);
+
+/// Main World で管理する GPU 物理用データ
+#[derive(Resource, Clone, Default)]
+pub struct GpuParticleData {
+    /// 粒子データ（CPU側）
+    pub particles: Vec<ParticleGpu>,
+    /// 粒子の Entity リスト（GPU配列インデックスと対応）
+    pub entities: Vec<Entity>,
+    /// シミュレーションパラメータ
+    pub params: SimulationParams,
+    /// 初回データ転送済みか
+    pub initialized: bool,
+    /// データ世代（抽出のたびにインクリメント）
+    pub generation: u64,
+    /// 一時停止中か（Render World に伝搬するためここに持つ）
+    pub paused: bool,
+}
+
+impl ExtractResource for GpuParticleData {
+    type Source = GpuParticleData;
+
+    fn extract_resource(source: &Self::Source) -> Self {
+        source.clone()
+    }
+}
+
+/// コンテナパラメータの抽出用リソース
+#[derive(Resource, Clone, Default)]
+pub struct ExtractedContainerParams {
+    pub container_offset: f32,
+}
+
+impl ExtractResource for ExtractedContainerParams {
+    type Source = ExtractedContainerParams;
+
+    fn extract_resource(source: &Self::Source) -> Self {
+        source.clone()
+    }
+}
+
+// GpuReadbackBuffer を Render World に抽出
+impl ExtractResource for GpuReadbackBuffer {
+    type Source = GpuReadbackBuffer;
+
+    fn extract_resource(source: &Self::Source) -> Self {
+        source.clone()
+    }
+}
+
+/// GPU 物理プラグイン
+pub struct GpuPhysicsPlugin;
+
+impl Plugin for GpuPhysicsPlugin {
+    fn build(&self, app: &mut App) {
+        // 読み戻しバッファを Main World に追加
+        let readback_buffer = GpuReadbackBuffer::default();
+
+        app.insert_resource(GpuParticleData::default())
+            .insert_resource(GpuPhysicsEnabled(true))
+            .insert_resource(ExtractedContainerParams::default())
+            .insert_resource(GridSettings::default())
+            .insert_resource(readback_buffer)
+            .add_plugins(ExtractResourcePlugin::<GpuParticleData>::default())
+            .add_plugins(ExtractResourcePlugin::<ExtractedContainerParams>::default())
+            .add_plugins(ExtractResourcePlugin::<GpuReadbackBuffer>::default())
+            .add_systems(PostUpdate, extract_particle_data)
+            .add_systems(PostUpdate, update_container_params)
+            .add_systems(Update, update_simulation_time);
+
+        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
+            return;
+        };
+
+        render_app.add_systems(
+            Render,
+            (
+                init_pipelines,
+                prepare_gpu_buffers,
+                update_params_only,
+                copy_to_staging,
+                process_readback,
+            )
+                .chain(),
+        );
+
+        // レンダーグラフにノードを追加
+        let mut render_graph = render_app.world_mut().resource_mut::<RenderGraph>();
+        render_graph.add_node(GpuPhysicsLabel, GpuPhysicsNode::new());
+        // カメラドライバーの前に実行
+        render_graph.add_node_edge(GpuPhysicsLabel, CameraDriverLabel);
+    }
+}
+
+/// パイプラインを初期化（一度だけ）
+fn init_pipelines(
+    mut commands: Commands,
+    pipelines: Option<Res<GpuPhysicsPipelines>>,
+    pipeline_cache: Res<bevy::render::render_resource::PipelineCache>,
+    asset_server: Res<AssetServer>,
+) {
+    // 既に初期化済みならスキップ
+    if pipelines.is_some() {
+        return;
+    }
+
+    let new_pipelines = GpuPhysicsPipelines::create(&pipeline_cache, &asset_server);
+    commands.insert_resource(new_pipelines);
+}
+
+/// コンテナのオフセットを更新
+fn update_container_params(
+    container: Res<Container>,
+    mut params: ResMut<ExtractedContainerParams>,
+) {
+    // GPU シェーダーは floor_y = -container_half_y + container_offset で計算するため、
+    // base_position.y を含めないと視覚的な床位置とずれる
+    params.container_offset = container.base_position.y + container.current_offset;
+}
+
+/// Main World の粒子データを GpuParticleData に抽出（初回または粒子数変更時）
+fn extract_particle_data(
+    added_particles: Query<(), Added<Position>>,
+    all_particles: Query<(
+        Entity,
+        &Position,
+        &Velocity,
+        &AngularVelocity,
+        &ParticleProperties,
+        &ParticleSize,
+    )>,
+    container: Res<Container>,
+    sim_time: Res<SimulationTime>,
+    material: Res<MaterialProperties>,
+    physics: Res<PhysicsConstants>,
+    grid_settings: Res<GridSettings>,
+    mut gpu_data: ResMut<GpuParticleData>,
+) {
+    // Added<Position> がある = 新しい粒子がスポーンされた（Reset含む）
+    // apply_gpu_results による Position の変更では Added はトリガーされない
+    let has_new_particles = !added_particles.is_empty();
+    if gpu_data.initialized && !has_new_particles {
+        return;
+    }
+
+    // 粒子データを更新（Entity も保存）
+    gpu_data.particles.clear();
+    gpu_data.entities.clear();
+    for (entity, pos, vel, angular_vel, props, size) in all_particles.iter() {
+        gpu_data.entities.push(entity);
+        gpu_data.particles.push(ParticleGpu {
+            pos: pos.0.into(),
+            radius: props.radius,
+            vel: vel.0.into(),
+            mass_inv: 1.0 / props.mass,
+            omega: angular_vel.0.into(),
+            inertia_inv: 1.0 / props.inertia,
+            size_flag: match size {
+                ParticleSize::Large => 1,
+                ParticleSize::Small => 0,
+            },
+            _pad: [0; 3],
+        });
+    }
+
+    info!(
+        "extract_particle_data: extracted {} particles, {} entities",
+        gpu_data.particles.len(),
+        gpu_data.entities.len()
+    );
+
+    if gpu_data.particles.is_empty() {
+        return;
+    }
+
+    // パラメータを更新（各種リソースから値を取得）
+    let world_half = [
+        container.half_extents.x,
+        container.half_extents.y,
+        container.half_extents.z,
+    ];
+    gpu_data.params = SimulationParams {
+        dt: sim_time.dt,
+        gravity: physics.gravity.y, // Vec3のY成分を使用
+        cell_size: grid_settings.cell_size,
+        grid_dim: grid_settings.compute_grid_dim(world_half),
+        world_half,
+        num_particles: gpu_data.particles.len() as u32,
+        youngs_modulus: material.youngs_modulus,
+        poisson_ratio: material.poisson_ratio,
+        restitution: material.restitution,
+        friction: material.friction,
+        container_offset: container.base_position.y + container.current_offset,
+        divider_height: container.divider_height,
+        container_half_x: container.half_extents.x,
+        container_half_y: container.half_extents.y,
+        container_half_z: container.half_extents.z,
+        divider_thickness: container.divider_thickness,
+        rolling_friction: material.rolling_friction,
+        _pad: 0.0,
+    };
+
+    gpu_data.initialized = true;
+    gpu_data.generation += 1;
+}
+
+/// シミュレーション時間を更新（GPU物理実行時）
+fn update_simulation_time(
+    mut gpu_data: ResMut<GpuParticleData>,
+    sim_state: Res<SimulationState>,
+    mut sim_time: ResMut<SimulationTime>,
+) {
+    // paused 状態を GpuParticleData に同期（Render World に伝搬）
+    gpu_data.paused = sim_state.paused;
+
+    // 一時停止中は時間を進めない
+    if sim_state.paused {
+        return;
+    }
+
+    // GPU物理が初期化済みの場合、毎フレームシミュレーション時間を進める
+    if gpu_data.initialized {
+        sim_time.step();
+    }
+}
+
+/// GPU バッファを準備・更新（初回のみ粒子データ、毎フレームパラメータ）
+fn prepare_gpu_buffers(
+    gpu_data: Res<GpuParticleData>,
+    render_device: Res<RenderDevice>,
+    render_queue: Res<RenderQueue>,
+    mut buffers: Option<ResMut<GpuPhysicsBuffers>>,
+    staging: Option<Res<ReadbackStaging>>,
+    mut commands: Commands,
+) {
+    let num_particles = gpu_data.params.num_particles;
+    if num_particles == 0 {
+        return;
+    }
+
+    // バッファがなければ作成
+    if buffers.is_none() {
+        let capacity = num_particles.max(2048);
+        let grid_size = gpu_data.params.grid_dim;
+        let mut new_buffers = GpuPhysicsBuffers::new(&render_device, capacity, grid_size);
+        // 容量はバッファサイズだが、実際の粒子数は0（まだアップロードしていない）
+        new_buffers.num_particles = 0;
+        commands.insert_resource(new_buffers);
+
+        // ステージングバッファも作成
+        if staging.is_none() {
+            let new_staging = ReadbackStaging::new(&render_device, capacity);
+            commands.insert_resource(new_staging);
+        }
+        return;
+    }
+
+    let buffers = buffers.as_mut().unwrap();
+
+    // 世代が変わった場合（初回またはReset後）に粒子データを GPU に転送
+    // 注: particles_out に書き込む。node.update() でスワップされた後、
+    // particles_in として読み取られるため。
+    if !gpu_data.particles.is_empty()
+        && buffers.last_uploaded_generation != gpu_data.generation
+    {
+        let particle_bytes = bytemuck::cast_slice(&gpu_data.particles);
+        render_queue.write_buffer(&buffers.particles_out, 0, particle_bytes);
+        buffers.num_particles = num_particles;
+        buffers.last_uploaded_generation = gpu_data.generation;
+    }
+}
+
+/// パラメータのみ毎フレーム更新（振動オフセット等）
+fn update_params_only(
+    gpu_data: Res<GpuParticleData>,
+    container_params: Res<ExtractedContainerParams>,
+    render_queue: Res<RenderQueue>,
+    buffers: Option<Res<GpuPhysicsBuffers>>,
+) {
+    let Some(buffers) = buffers else {
+        return;
+    };
+
+    if buffers.num_particles == 0 {
+        return;
+    }
+
+    // パラメータを更新（振動オフセットを反映）
+    let mut params = gpu_data.params;
+    params.container_offset = container_params.container_offset;
+
+    let params_bytes = bytemuck::bytes_of(&params);
+    render_queue.write_buffer(&buffers.params, 0, params_bytes);
+}
+
+/// GPU 出力をステージングバッファにコピー
+fn copy_to_staging(
+    render_device: Res<RenderDevice>,
+    render_queue: Res<RenderQueue>,
+    buffers: Option<Res<GpuPhysicsBuffers>>,
+    mut staging: Option<ResMut<ReadbackStaging>>,
+) {
+    let Some(buffers) = buffers else {
+        return;
+    };
+    let Some(ref mut staging) = staging else {
+        return;
+    };
+
+    if buffers.num_particles == 0 || staging.mapping_requested {
+        return;
+    }
+
+    let particle_size = std::mem::size_of::<ParticleGpu>() as u64;
+    let copy_size = particle_size * buffers.num_particles as u64;
+
+    if copy_size > staging.size {
+        return;
+    }
+
+    // コピーコマンドを発行
+    let mut encoder = render_device.create_command_encoder(&CommandEncoderDescriptor {
+        label: Some("readback_copy_encoder"),
+    });
+
+    encoder.copy_buffer_to_buffer(buffers.current_output(), 0, &staging.buffer, 0, copy_size);
+
+    render_queue.submit([encoder.finish()]);
+
+    // マッピングをリクエスト
+    staging.num_particles = buffers.num_particles;
+    staging.mapping_requested = true;
+    staging
+        .mapping_complete
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+
+    let mapping_complete = staging.mapping_complete.clone();
+    let buffer_slice = staging.buffer.slice(0..copy_size);
+    buffer_slice.map_async(MapMode::Read, move |result| {
+        // マッピング完了時のコールバック
+        if result.is_ok() {
+            mapping_complete.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    });
+}
+
+/// 読み戻し処理（前フレームのマッピング結果を読み取り）
+fn process_readback(
+    mut staging: Option<ResMut<ReadbackStaging>>,
+    readback_buffer: Option<Res<GpuReadbackBuffer>>,
+) {
+    let Some(ref mut staging) = staging else {
+        return;
+    };
+    let Some(readback_buffer) = readback_buffer else {
+        return;
+    };
+
+    if !staging.mapping_requested {
+        return;
+    }
+
+    // マッピングが完了したかチェック
+    if !staging
+        .mapping_complete
+        .load(std::sync::atomic::Ordering::SeqCst)
+    {
+        return; // まだ完了していない - 次フレームで再試行
+    }
+
+    let particle_size = std::mem::size_of::<ParticleGpu>();
+    let num_particles = staging.num_particles as usize;
+    let byte_len = particle_size * num_particles;
+
+    // マッピング完了済みなので安全に読み取り可能
+    let buffer_slice = staging.buffer.slice(0..byte_len as u64);
+    let data = buffer_slice.get_mapped_range();
+
+    // データを読み取り
+    if data.len() >= byte_len {
+        let particles: &[ParticleGpu] = bytemuck::cast_slice(&data[..byte_len]);
+
+        // 共有バッファに書き込み
+        if let Ok(mut guard) = readback_buffer.data.write() {
+            guard.clear();
+            guard.extend_from_slice(particles);
+        }
+
+        // フレームカウンタをインクリメント
+        if let Ok(mut frame) = readback_buffer.frame.write() {
+            *frame += 1;
+        }
+    }
+
+    drop(data);
+    staging.buffer.unmap();
+    staging.mapping_requested = false;
+    staging
+        .mapping_complete
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+}

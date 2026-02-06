@@ -3,14 +3,30 @@ name = "granular-clock"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["native"]
+native = ["bevy/dynamic_linking"]
+
 [dependencies]
-bevy = { version = "0.18", features = ["dynamic_linking", "free_camera", "experimental_bevy_ui_widgets"] }
+bevy = { version = "0.18", features = ["free_camera", "experimental_bevy_ui_widgets"] }
+bytemuck = { version = "1.21", features = ["derive"] }
 rayon = "1.11"
 rand = "0.9"
 parking_lot = "0.12.5"
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+# Native-only dependencies
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+# WASM-only dependencies
+getrandom = { version = "0.3", features = ["wasm_js"] }
 
 [profile.dev]
 opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
+
+[profile.release]
+opt-level = "z"
+lto = true

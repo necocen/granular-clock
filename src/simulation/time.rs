@@ -1,5 +1,15 @@
 use bevy::prelude::*;
 
+/// 物理計算バックエンド
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PhysicsBackend {
+    /// CPU（rayon並列化）
+    Cpu,
+    /// GPU（WebGPU compute shader）
+    #[default]
+    Gpu,
+}
+
 /// シミュレーション時間（リアルタイムとは独立）
 #[derive(Resource)]
 pub struct SimulationTime {

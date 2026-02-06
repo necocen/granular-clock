@@ -38,7 +38,7 @@ impl OscillationParams {
 /// 振動を更新するシステム
 pub fn update_oscillation(
     mut container: ResMut<Container>,
-    mut params: ResMut<OscillationParams>,
+    params: Res<OscillationParams>,
     sim_time: Res<super::SimulationTime>,
 ) {
     if !params.enabled {
@@ -46,12 +46,7 @@ pub fn update_oscillation(
         return;
     }
 
-    // 位相を更新
-    params.phase += params.frequency * 2.0 * PI * sim_time.dt;
-    if params.phase > 2.0 * PI {
-        params.phase -= 2.0 * PI;
-    }
-
-    // 正弦波で振動
-    container.current_offset = params.amplitude * params.phase.sin();
+    // シミュレーション経過時間から直接オフセットを計算
+    let t = sim_time.elapsed as f32;
+    container.current_offset = params.amplitude * (2.0 * PI * params.frequency * t).sin();
 }
