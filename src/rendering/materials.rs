@@ -62,7 +62,7 @@ pub fn setup_rendering(
 
     // 仕切り用マテリアル（やや不透明）
     let divider_material = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.4, 0.4, 0.4, 0.6),
+        base_color: Color::srgba(0.4, 0.4, 0.4, 0.8),
         alpha_mode: AlphaMode::Blend,
         ..default()
     });

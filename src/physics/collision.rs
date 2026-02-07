@@ -28,7 +28,7 @@ impl Default for WallProperties {
             stiffness: 10000.0, // ペナルティ剛性（高めに設定して貫通を減らす）
             damping: 20.0,      // 減衰係数（参考値、実際は質量から計算）
             friction: 0.4,      // 摩擦係数
-            restitution: 0.6,   // 反発係数（低めに設定）
+            restitution: 0.3,   // 反発係数（低めに設定）
         }
     }
 }
