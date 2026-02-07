@@ -2,10 +2,10 @@ use bevy::prelude::*;
 use bevy::ui::Checked;
 
 use crate::analysis::DistributionHistory;
-use crate::physics::{ParticleBundle, ParticleSize, Position};
-use crate::rendering::ParticleMeshes;
+use crate::physics::{ParticleSize, ParticleStore};
 use crate::simulation::{
-    Container, OscillationParams, PhysicsBackend, SimulationConfig, SimulationState, SimulationTime,
+    Container, OscillationParams, PhysicsBackend, SimulationConfig, SimulationSettings,
+    SimulationState, SimulationTime,
 };
 
 use super::markers::*;
@@ -18,6 +18,22 @@ pub fn update_simulation_time_display(
     if let Ok(mut text) = time_text.single_mut() {
         let elapsed = sim_time.elapsed;
         text.0 = format!("Time: {:.1} s", elapsed);
+    }
+}
+
+/// FPS とシミュレーション速度の表示を更新
+pub fn update_fps_display(
+    time: Res<Time>,
+    settings: Res<SimulationSettings>,
+    mut fps_text: Query<&mut Text, With<FpsText>>,
+) {
+    if let Ok(mut text) = fps_text.single_mut() {
+        let dt = time.delta_secs();
+        if dt > 0.0 {
+            let fps = 1.0 / dt;
+            let sim_steps = fps * settings.substeps_per_frame as f32;
+            text.0 = format!("FPS: {:.0}  Sim: {:.0} steps/s", fps, sim_steps);
+        }
     }
 }
 
@@ -198,12 +214,10 @@ pub fn update_button_colors(
 
 /// シミュレーションのリセットを処理
 pub fn handle_reset(
-    mut commands: Commands,
     mut sim_state: ResMut<SimulationState>,
     mut sim_time: ResMut<SimulationTime>,
     config: Res<SimulationConfig>,
-    particles: Query<Entity, With<Position>>,
-    meshes: Res<ParticleMeshes>,
+    mut store: ResMut<ParticleStore>,
     container: Res<Container>,
 ) {
     if !sim_state.reset_requested {
@@ -214,9 +228,7 @@ pub fn handle_reset(
     sim_time.reset();
 
     // 既存の粒子を削除
-    for entity in particles.iter() {
-        commands.entity(entity).despawn();
-    }
+    store.clear();
 
     // 新しい粒子をスポーン
     use rand::Rng;
@@ -232,19 +244,12 @@ pub fn handle_reset(
         let z = rng.random_range(-spawn_area_z..spawn_area_z);
         let y = base_y + config.large_radius + rng.random_range(0.0..0.2);
 
-        let pos = Vec3::new(x, y, z);
-
-        commands.spawn((
-            ParticleBundle::new(
-                pos,
-                config.large_radius,
-                config.density,
-                ParticleSize::Large,
-            ),
-            Mesh3d(meshes.sphere.clone()),
-            MeshMaterial3d(meshes.large_material.clone()),
-            Transform::from_translation(pos).with_scale(Vec3::splat(config.large_radius)),
-        ));
+        store.spawn(
+            Vec3::new(x, y, z),
+            config.large_radius,
+            config.density,
+            ParticleSize::Large,
+        );
     }
 
     // 小粒子をスポーン
@@ -253,18 +258,11 @@ pub fn handle_reset(
         let z = rng.random_range(-spawn_area_z..spawn_area_z);
         let y = base_y + config.small_radius + rng.random_range(0.0..0.2);
 
-        let pos = Vec3::new(x, y, z);
-
-        commands.spawn((
-            ParticleBundle::new(
-                pos,
-                config.small_radius,
-                config.density,
-                ParticleSize::Small,
-            ),
-            Mesh3d(meshes.sphere.clone()),
-            MeshMaterial3d(meshes.small_material.clone()),
-            Transform::from_translation(pos).with_scale(Vec3::splat(config.small_radius)),
-        ));
+        store.spawn(
+            Vec3::new(x, y, z),
+            config.small_radius,
+            config.density,
+            ParticleSize::Small,
+        );
     }
 }

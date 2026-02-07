@@ -43,6 +43,17 @@ pub fn setup_bevy_ui_controls(mut commands: Commands) {
                 TextColor(Color::srgb(0.8, 0.8, 0.2)),
             ));
 
+            // FPS / simulation rate display
+            parent.spawn((
+                FpsText,
+                Text::new("FPS: --  Sim: -- steps/s"),
+                TextFont {
+                    font_size: 12.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.6, 0.8, 0.6)),
+            ));
+
             // Oscillation toggle
             parent
                 .spawn(Node {

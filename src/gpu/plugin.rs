@@ -9,12 +9,12 @@ use bevy::{
         Render, RenderApp,
     },
 };
+use std::sync::Arc;
 
-use crate::physics::{
-    AngularVelocity, MaterialProperties, ParticleProperties, ParticleSize, PhysicsConstants,
-    Position, Velocity,
+use crate::physics::{MaterialProperties, ParticleSize, ParticleStore, PhysicsConstants};
+use crate::simulation::{
+    Container, PhysicsBackend, SimulationSettings, SimulationState, SimulationTime,
 };
-use crate::simulation::{Container, PhysicsBackend, SimulationState, SimulationTime};
 
 use super::{
     buffers::{GpuPhysicsBuffers, ParticleGpu, SimulationParams},
@@ -32,10 +32,8 @@ pub struct GpuPhysicsEnabled(pub bool);
 /// Main World で管理する GPU 物理用データ
 #[derive(Resource, Clone, Default)]
 pub struct GpuParticleData {
-    /// 粒子データ（CPU側）
-    pub particles: Vec<ParticleGpu>,
-    /// 粒子の Entity リスト（GPU配列インデックスと対応）
-    pub entities: Vec<Entity>,
+    /// 粒子データ（CPU側、Arc で clone を O(1) に）
+    pub particles: Arc<Vec<ParticleGpu>>,
     /// シミュレーションパラメータ
     pub params: SimulationParams,
     /// 初回データ転送済みか
@@ -44,13 +42,17 @@ pub struct GpuParticleData {
     pub generation: u64,
     /// 一時停止中か（Render World に伝搬するためここに持つ）
     pub paused: bool,
+    /// 1フレームあたりのサブステップ数（Render World に伝搬）
+    pub substeps: u32,
+    /// 最後に確認した ParticleStore の世代番号
+    pub last_store_generation: u64,
 }
 
 impl ExtractResource for GpuParticleData {
     type Source = GpuParticleData;
 
     fn extract_resource(source: &Self::Source) -> Self {
-        source.clone()
+        source.clone() // Arc clone は O(1)
     }
 }
 
@@ -151,15 +153,7 @@ fn update_container_params(
 /// Main World の粒子データを GpuParticleData に抽出（初回または粒子数変更時）
 #[allow(clippy::too_many_arguments)]
 fn extract_particle_data(
-    added_particles: Query<(), Added<Position>>,
-    all_particles: Query<(
-        Entity,
-        &Position,
-        &Velocity,
-        &AngularVelocity,
-        &ParticleProperties,
-        &ParticleSize,
-    )>,
+    store: Res<ParticleStore>,
     container: Res<Container>,
     sim_time: Res<SimulationTime>,
     material: Res<MaterialProperties>,
@@ -168,28 +162,25 @@ fn extract_particle_data(
     backend: Res<PhysicsBackend>,
     mut gpu_data: ResMut<GpuParticleData>,
 ) {
-    // Added<Position> がある = 新しい粒子がスポーンされた（Reset含む）
-    // apply_gpu_results による Position の変更では Added はトリガーされない
-    let has_new_particles = !added_particles.is_empty();
-    // CPU→GPU 切り替え時は現在の ECS 状態を GPU バッファに反映する
+    // ParticleStore の世代が変わったかチェック（spawn/clear でのみインクリメントされる）
+    // GPU readback による書き戻しでは generation は変わらないので、巻き戻りが起きない
+    let store_generation_changed = store.generation != gpu_data.last_store_generation;
     let backend_switched_to_gpu = backend.is_changed() && *backend == PhysicsBackend::Gpu;
-    if gpu_data.initialized && !has_new_particles && !backend_switched_to_gpu {
+    if gpu_data.initialized && !store_generation_changed && !backend_switched_to_gpu {
         return;
     }
 
-    // 粒子データを更新（Entity も保存）
-    gpu_data.particles.clear();
-    gpu_data.entities.clear();
-    for (entity, pos, vel, angular_vel, props, size) in all_particles.iter() {
-        gpu_data.entities.push(entity);
-        gpu_data.particles.push(ParticleGpu {
-            pos: pos.0.into(),
-            radius: props.radius,
-            vel: vel.0.into(),
-            mass_inv: 1.0 / props.mass,
-            omega: angular_vel.0.into(),
-            inertia_inv: 1.0 / props.inertia,
-            size_flag: match size {
+    // 粒子データを更新
+    let mut particles = Vec::with_capacity(store.len());
+    for p in &store.particles {
+        particles.push(ParticleGpu {
+            pos: p.position.into(),
+            radius: p.radius,
+            vel: p.velocity.into(),
+            mass_inv: 1.0 / p.mass,
+            omega: p.angular_velocity.into(),
+            inertia_inv: 1.0 / p.inertia,
+            size_flag: match p.size {
                 ParticleSize::Large => 1,
                 ParticleSize::Small => 0,
             },
@@ -198,12 +189,11 @@ fn extract_particle_data(
     }
 
     info!(
-        "extract_particle_data: extracted {} particles, {} entities",
-        gpu_data.particles.len(),
-        gpu_data.entities.len()
+        "extract_particle_data: extracted {} particles",
+        particles.len(),
     );
 
-    if gpu_data.particles.is_empty() {
+    if particles.is_empty() {
         return;
     }
 
@@ -219,7 +209,7 @@ fn extract_particle_data(
         cell_size: grid_settings.cell_size,
         grid_dim: grid_settings.compute_grid_dim(world_half),
         world_half,
-        num_particles: gpu_data.particles.len() as u32,
+        num_particles: particles.len() as u32,
         youngs_modulus: material.youngs_modulus,
         poisson_ratio: material.poisson_ratio,
         restitution: material.restitution,
@@ -234,8 +224,10 @@ fn extract_particle_data(
         _pad: 0.0,
     };
 
+    gpu_data.particles = Arc::new(particles);
     gpu_data.initialized = true;
     gpu_data.generation += 1;
+    gpu_data.last_store_generation = store.generation;
 }
 
 /// シミュレーション時間を更新（GPU物理実行時）
@@ -243,18 +235,28 @@ fn update_simulation_time(
     mut gpu_data: ResMut<GpuParticleData>,
     sim_state: Res<SimulationState>,
     mut sim_time: ResMut<SimulationTime>,
+    settings: Res<SimulationSettings>,
+    backend: Res<PhysicsBackend>,
 ) {
-    // paused 状態を GpuParticleData に同期（Render World に伝搬）
+    // paused 状態と substeps を GpuParticleData に同期（Render World に伝搬）
     gpu_data.paused = sim_state.paused;
+    gpu_data.substeps = settings.substeps_per_frame;
+
+    // CPU モードでは run_physics_substeps が時間を進めるので、ここでは何もしない
+    if *backend != PhysicsBackend::Gpu {
+        return;
+    }
 
     // 一時停止中は時間を進めない
     if sim_state.paused {
         return;
     }
 
-    // GPU物理が初期化済みの場合、毎フレームシミュレーション時間を進める
+    // GPU物理が初期化済みの場合、サブステップ数分だけシミュレーション時間を進める
     if gpu_data.initialized {
-        sim_time.step();
+        for _ in 0..settings.substeps_per_frame {
+            sim_time.step();
+        }
     }
 }
 

@@ -1,49 +1,18 @@
-use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::*;
 
 use crate::physics::{
     clamp_to_container, clamp_velocity, compute_particle_contact_force, compute_wall_contact_force,
-    integrate_first_half, integrate_second_half, AngularVelocity, ContactHistory, Force,
-    MaterialProperties, ParticleProperties, PhysicsConstants, Position, SpatialHashGrid, Torque,
-    Velocity, WallProperties,
+    integrate_first_half, integrate_second_half, ContactHistory, MaterialProperties, ParticleStore,
+    PhysicsConstants, SpatialHashGrid, WallProperties,
 };
 
-use super::{Container, SimulationSettings, SimulationTime};
+use super::{Container, OscillationParams, SimulationSettings, SimulationState, SimulationTime};
 
-/// 1物理ステップを実行（内部用）
-fn run_single_physics_step(world: &mut World) {
-    // 振動を更新
-    let _ = world.run_system_once(update_oscillation);
-    // 空間グリッドを構築
-    let _ = world.run_system_once(build_spatial_grid);
-    // 力をクリア
-    let _ = world.run_system_once(clear_forces);
-    // 粒子衝突を計算
-    let _ = world.run_system_once(compute_particle_collisions);
-    // 壁衝突を計算
-    let _ = world.run_system_once(compute_wall_collisions);
-    // 位置を積分
-    let _ = world.run_system_once(integrate_positions);
-    // クランプ
-    let _ = world.run_system_once(clamp_particles);
-    // 力をクリア
-    let _ = world.run_system_once(clear_forces);
-    // 粒子衝突を計算
-    let _ = world.run_system_once(compute_particle_collisions);
-    // 壁衝突を計算
-    let _ = world.run_system_once(compute_wall_collisions);
-    // 速度を積分
-    let _ = world.run_system_once(integrate_velocities);
-    // クランプ
-    let _ = world.run_system_once(clamp_particles);
-    // 接触履歴をクリーンアップ
-    let _ = world.run_system_once(cleanup_contacts);
-}
-
+/// 振動を更新
 fn update_oscillation(
-    mut container: ResMut<Container>,
-    mut params: ResMut<super::OscillationParams>,
-    sim_time: Res<SimulationTime>,
+    container: &mut Container,
+    params: &mut OscillationParams,
+    sim_time: &SimulationTime,
 ) {
     use std::f32::consts::PI;
     if !params.enabled {
@@ -57,187 +26,158 @@ fn update_oscillation(
     container.current_offset = params.amplitude * params.phase.sin();
 }
 
-fn build_spatial_grid(grid: Res<SpatialHashGrid>, particles: Query<(Entity, &Position)>) {
+/// 空間ハッシュグリッドを構築
+fn build_spatial_grid(grid: &SpatialHashGrid, particles: &ParticleStore) {
     grid.clear();
-    for (entity, pos) in particles.iter() {
-        grid.insert(entity, pos.0);
+    for (i, p) in particles.particles.iter().enumerate() {
+        grid.insert(i, p.position);
     }
 }
 
-fn clear_forces(mut particles: Query<(&mut Force, &mut Torque)>) {
-    particles
-        .par_iter_mut()
-        .for_each(|(mut force, mut torque)| {
-            force.0 = Vec3::ZERO;
-            torque.0 = Vec3::ZERO;
-        });
+/// 全パーティクルの力・トルクをゼロクリア
+fn clear_forces(particles: &mut ParticleStore) {
+    for p in particles.particles.iter_mut() {
+        p.force = Vec3::ZERO;
+        p.torque = Vec3::ZERO;
+    }
 }
 
+/// パーティクル間の衝突を計算
 fn compute_particle_collisions(
-    grid: Res<SpatialHashGrid>,
-    mut particles: Query<(
-        Entity,
-        &Position,
-        &Velocity,
-        &AngularVelocity,
-        &mut Force,
-        &mut Torque,
-        &ParticleProperties,
-    )>,
-    mut contact_history: ResMut<ContactHistory>,
-    material: Res<MaterialProperties>,
-    sim_time: Res<SimulationTime>,
+    particles: &mut ParticleStore,
+    grid: &SpatialHashGrid,
+    contact_history: &mut ContactHistory,
+    material: &MaterialProperties,
+    sim_time: &SimulationTime,
 ) {
     let dt = sim_time.dt;
-    let mut collision_pairs: Vec<(Entity, Entity)> = Vec::new();
 
+    // 衝突ペアを収集
+    let mut collision_pairs: Vec<(usize, usize)> = Vec::new();
     for bucket_idx in 0..grid.table_size {
         let bucket = grid.buckets[bucket_idx].lock();
-        let entities: Vec<Entity> = bucket.clone();
+        let indices: Vec<usize> = bucket.clone();
         drop(bucket);
 
-        for i in 0..entities.len() {
-            for j in (i + 1)..entities.len() {
-                collision_pairs.push((entities[i], entities[j]));
+        for i in 0..indices.len() {
+            for j in (i + 1)..indices.len() {
+                collision_pairs.push((indices[i], indices[j]));
             }
         }
     }
 
-    for (e1, e2) in collision_pairs {
-        let Ok([p1, p2]) = particles.get_many_mut([e1, e2]) else {
-            continue;
-        };
+    // 衝突力を計算して蓄積
+    for (i1, i2) in collision_pairs {
+        // split_at_mut で安全に 2 つの要素への可変参照を取得
+        let (lo, hi) = if i1 < i2 { (i1, i2) } else { (i2, i1) };
+        let (left, right) = particles.particles.split_at_mut(hi);
+        let p_lo = &left[lo];
+        let p_hi = &right[0];
 
-        let (_, pos1, vel1, omega1, _, _, props1) = p1;
-        let (_, pos2, vel2, omega2, _, _, props2) = p2;
+        let contact_state = contact_history.get_or_create(i1, i2);
 
-        let contact_state = contact_history.get_or_create(e1, e2);
-
-        let (force1, force2) = compute_particle_contact_force(
-            pos1.0,
-            vel1.0,
-            omega1.0,
-            props1.radius,
-            props1.mass,
-            pos2.0,
-            vel2.0,
-            omega2.0,
-            props2.radius,
-            props2.mass,
-            &material,
+        let (force_lo, force_hi) = compute_particle_contact_force(
+            p_lo.position,
+            p_lo.velocity,
+            p_lo.angular_velocity,
+            p_lo.radius,
+            p_lo.mass,
+            p_hi.position,
+            p_hi.velocity,
+            p_hi.angular_velocity,
+            p_hi.radius,
+            p_hi.mass,
+            material,
             contact_state,
             dt,
         );
 
-        if let Ok([mut p1, mut p2]) = particles.get_many_mut([e1, e2]) {
-            p1.4 .0 += force1.force;
-            p1.5 .0 += force1.torque;
-            p2.4 .0 += force2.force;
-            p2.5 .0 += force2.torque;
+        // i1 < i2 のとき lo=i1, hi=i2 なので force_lo→i1, force_hi→i2
+        // i1 > i2 のとき lo=i2, hi=i1 なので force_lo→i2, force_hi→i1
+        if i1 < i2 {
+            particles.particles[i1].force += force_lo.force;
+            particles.particles[i1].torque += force_lo.torque;
+            particles.particles[i2].force += force_hi.force;
+            particles.particles[i2].torque += force_hi.torque;
+        } else {
+            particles.particles[i2].force += force_lo.force;
+            particles.particles[i2].torque += force_lo.torque;
+            particles.particles[i1].force += force_hi.force;
+            particles.particles[i1].torque += force_hi.torque;
         }
     }
 }
 
+/// 壁との衝突を計算
 fn compute_wall_collisions(
-    container: Res<Container>,
-    wall_props: Res<WallProperties>,
-    mut particles: Query<(
-        &Position,
-        &Velocity,
-        &AngularVelocity,
-        &mut Force,
-        &mut Torque,
-        &ParticleProperties,
-    )>,
+    particles: &mut ParticleStore,
+    container: &Container,
+    wall_props: &WallProperties,
 ) {
-    particles
-        .par_iter_mut()
-        .for_each(|(pos, vel, omega, mut force, mut torque, props)| {
-            let wall_force = compute_wall_contact_force(
-                pos.0,
-                vel.0,
-                omega.0,
-                props.radius,
-                props.mass,
-                &container,
-                &wall_props,
-            );
-            force.0 += wall_force.force;
-            torque.0 += wall_force.torque;
-        });
+    for p in particles.particles.iter_mut() {
+        let wall_force = compute_wall_contact_force(
+            p.position,
+            p.velocity,
+            p.angular_velocity,
+            p.radius,
+            p.mass,
+            container,
+            wall_props,
+        );
+        p.force += wall_force.force;
+        p.torque += wall_force.torque;
+    }
 }
 
+/// 位置の積分（Velocity Verlet 前半ステップ）
 fn integrate_positions(
-    physics: Res<PhysicsConstants>,
-    sim_time: Res<SimulationTime>,
-    mut particles: Query<(
-        &mut Position,
-        &mut Velocity,
-        &mut AngularVelocity,
-        &Force,
-        &Torque,
-        &ParticleProperties,
-    )>,
+    particles: &mut ParticleStore,
+    physics: &PhysicsConstants,
+    sim_time: &SimulationTime,
 ) {
     let dt = sim_time.dt;
     let gravity = physics.gravity;
 
-    particles
-        .par_iter_mut()
-        .for_each(|(mut pos, mut vel, mut omega, force, torque, props)| {
-            integrate_first_half(
-                &mut pos.0,
-                &mut vel.0,
-                &mut omega.0,
-                force.0,
-                torque.0,
-                props.mass,
-                props.inertia,
-                gravity,
-                dt,
-            );
-        });
+    for p in particles.particles.iter_mut() {
+        integrate_first_half(
+            &mut p.position,
+            &mut p.velocity,
+            &mut p.angular_velocity,
+            p.force,
+            p.torque,
+            p.mass,
+            p.inertia,
+            gravity,
+            dt,
+        );
+    }
 }
 
+/// 速度の積分（Velocity Verlet 後半ステップ）
 fn integrate_velocities(
-    physics: Res<PhysicsConstants>,
-    sim_time: Res<SimulationTime>,
-    mut particles: Query<(
-        &mut Velocity,
-        &mut AngularVelocity,
-        &Force,
-        &Torque,
-        &ParticleProperties,
-    )>,
+    particles: &mut ParticleStore,
+    physics: &PhysicsConstants,
+    sim_time: &SimulationTime,
 ) {
     let dt = sim_time.dt;
     let gravity = physics.gravity;
 
-    particles
-        .par_iter_mut()
-        .for_each(|(mut vel, mut omega, force, torque, props)| {
-            integrate_second_half(
-                &mut vel.0,
-                &mut omega.0,
-                force.0,
-                torque.0,
-                props.mass,
-                props.inertia,
-                gravity,
-                dt,
-            );
-        });
+    for p in particles.particles.iter_mut() {
+        integrate_second_half(
+            &mut p.velocity,
+            &mut p.angular_velocity,
+            p.force,
+            p.torque,
+            p.mass,
+            p.inertia,
+            gravity,
+            dt,
+        );
+    }
 }
 
-fn clamp_particles(
-    container: Res<Container>,
-    mut particles: Query<(
-        &mut Position,
-        &mut Velocity,
-        &mut AngularVelocity,
-        &ParticleProperties,
-    )>,
-) {
+/// パーティクルをコンテナ内にクランプ
+fn clamp_particles(particles: &mut ParticleStore, container: &Container) {
     let box_offset = Vec3::Y * container.current_offset;
     let box_min = container.base_position - container.half_extents + box_offset;
     let box_max = container.base_position + container.half_extents + box_offset;
@@ -245,37 +185,73 @@ fn clamp_particles(
     const MAX_LINEAR_VEL: f32 = 10.0;
     const MAX_ANGULAR_VEL: f32 = 100.0;
 
-    particles
-        .par_iter_mut()
-        .for_each(|(mut pos, mut vel, mut omega, props)| {
-            clamp_to_container(&mut pos.0, &mut vel.0, props.radius, box_min, box_max);
-            clamp_velocity(&mut vel.0, &mut omega.0, MAX_LINEAR_VEL, MAX_ANGULAR_VEL);
-        });
+    for p in particles.particles.iter_mut() {
+        clamp_to_container(&mut p.position, &mut p.velocity, p.radius, box_min, box_max);
+        clamp_velocity(
+            &mut p.velocity,
+            &mut p.angular_velocity,
+            MAX_LINEAR_VEL,
+            MAX_ANGULAR_VEL,
+        );
+    }
 }
 
-fn cleanup_contacts(mut contact_history: ResMut<ContactHistory>) {
-    contact_history.cleanup();
-}
-
-/// 物理サブステップを実行するシステム
+/// 物理サブステップを実行するシステム（exclusive system）
 pub fn run_physics_substeps(world: &mut World) {
     // 一時停止中なら何もしない
-    let paused = {
-        let sim_state = world.resource::<super::SimulationState>();
-        sim_state.paused
-    };
+    let paused = world.resource::<SimulationState>().paused;
     if paused {
         return;
     }
 
-    let substeps = {
-        let settings = world.resource::<SimulationSettings>();
-        settings.substeps_per_frame
-    };
+    let substeps = world.resource::<SimulationSettings>().substeps_per_frame;
+
+    // リソースを一括取り出し（exclusive system なので安全）
+    let mut particles = world.remove_resource::<ParticleStore>().unwrap();
+    let mut contact_history = world.remove_resource::<ContactHistory>().unwrap();
+    let mut container = world.remove_resource::<Container>().unwrap();
+    let mut osc_params = world.remove_resource::<OscillationParams>().unwrap();
+    let mut sim_time = world.remove_resource::<SimulationTime>().unwrap();
+
+    // 不変リソースはコピー（Copy 型なので安全かつ参照の衝突を回避）
+    let grid = world.resource::<SpatialHashGrid>();
+    let material = *world.resource::<MaterialProperties>();
+    let physics = *world.resource::<PhysicsConstants>();
+    let wall_props = *world.resource::<WallProperties>();
 
     for _ in 0..substeps {
-        run_single_physics_step(world);
-        // シミュレーション時間を進める
-        world.resource_mut::<SimulationTime>().step();
+        update_oscillation(&mut container, &mut osc_params, &sim_time);
+        build_spatial_grid(grid, &particles);
+        clear_forces(&mut particles);
+        compute_particle_collisions(
+            &mut particles,
+            grid,
+            &mut contact_history,
+            &material,
+            &sim_time,
+        );
+        compute_wall_collisions(&mut particles, &container, &wall_props);
+        integrate_positions(&mut particles, &physics, &sim_time);
+        clamp_particles(&mut particles, &container);
+        clear_forces(&mut particles);
+        compute_particle_collisions(
+            &mut particles,
+            grid,
+            &mut contact_history,
+            &material,
+            &sim_time,
+        );
+        compute_wall_collisions(&mut particles, &container, &wall_props);
+        integrate_velocities(&mut particles, &physics, &sim_time);
+        clamp_particles(&mut particles, &container);
+        contact_history.cleanup();
+        sim_time.step();
     }
+
+    // リソースを戻す
+    world.insert_resource(particles);
+    world.insert_resource(contact_history);
+    world.insert_resource(container);
+    world.insert_resource(osc_params);
+    world.insert_resource(sim_time);
 }

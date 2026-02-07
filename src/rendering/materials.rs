@@ -1,14 +1,12 @@
 use bevy::prelude::*;
 
-use crate::physics::{ParticleBundle, ParticleSize};
+use crate::physics::{ParticleSize, ParticleStore};
 use crate::simulation::{Container, SimulationConfig};
 
-/// 粒子用のメッシュとマテリアルのハンドル
+/// 粒子用のメッシュハンドル
 #[derive(Resource)]
 pub struct ParticleMeshes {
     pub sphere: Handle<Mesh>,
-    pub large_material: Handle<StandardMaterial>,
-    pub small_material: Handle<StandardMaterial>,
 }
 
 /// コンテナ用のメッシュエンティティ
@@ -28,26 +26,8 @@ pub fn setup_rendering(
     // 粒子用の球メッシュ（低ポリゴン）
     let sphere_mesh = meshes.add(Sphere::new(1.0).mesh().ico(2).unwrap());
 
-    // 大粒子用マテリアル（赤）
-    let large_material = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.8, 0.2, 0.2),
-        metallic: 0.3,
-        perceptual_roughness: 0.5,
-        ..default()
-    });
-
-    // 小粒子用マテリアル（青）
-    let small_material = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.2, 0.2, 0.8),
-        metallic: 0.3,
-        perceptual_roughness: 0.5,
-        ..default()
-    });
-
     commands.insert_resource(ParticleMeshes {
         sphere: sphere_mesh,
-        large_material,
-        small_material,
     });
 
     // 壁用マテリアル（とても透明）
@@ -152,10 +132,9 @@ pub fn setup_rendering(
     commands.insert_resource(ContainerEntities { floor, divider });
 }
 
-/// 粒子をスポーン
+/// 粒子をスポーン（ParticleStore に追加するだけ。ECS エンティティは作らない）
 pub fn spawn_particles(
-    mut commands: Commands,
-    meshes: Res<ParticleMeshes>,
+    mut store: ResMut<ParticleStore>,
     config: Res<SimulationConfig>,
     container: Res<Container>,
 ) {
@@ -172,19 +151,12 @@ pub fn spawn_particles(
         let z = rng.random_range(-spawn_area_z..spawn_area_z);
         let y = base_y + config.large_radius + rng.random_range(0.0..0.2);
 
-        let pos = Vec3::new(x, y, z);
-
-        commands.spawn((
-            ParticleBundle::new(
-                pos,
-                config.large_radius,
-                config.density,
-                ParticleSize::Large,
-            ),
-            Mesh3d(meshes.sphere.clone()),
-            MeshMaterial3d(meshes.large_material.clone()),
-            Transform::from_translation(pos).with_scale(Vec3::splat(config.large_radius)),
-        ));
+        store.spawn(
+            Vec3::new(x, y, z),
+            config.large_radius,
+            config.density,
+            ParticleSize::Large,
+        );
     }
 
     // 小粒子をスポーン
@@ -193,19 +165,12 @@ pub fn spawn_particles(
         let z = rng.random_range(-spawn_area_z..spawn_area_z);
         let y = base_y + config.small_radius + rng.random_range(0.0..0.2);
 
-        let pos = Vec3::new(x, y, z);
-
-        commands.spawn((
-            ParticleBundle::new(
-                pos,
-                config.small_radius,
-                config.density,
-                ParticleSize::Small,
-            ),
-            Mesh3d(meshes.sphere.clone()),
-            MeshMaterial3d(meshes.small_material.clone()),
-            Transform::from_translation(pos).with_scale(Vec3::splat(config.small_radius)),
-        ));
+        store.spawn(
+            Vec3::new(x, y, z),
+            config.small_radius,
+            config.density,
+            ParticleSize::Small,
+        );
     }
 }
 

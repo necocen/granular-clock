@@ -38,7 +38,7 @@ impl GridSettings {
 #[derive(Resource)]
 pub struct SpatialHashGrid {
     pub cell_size: f32,
-    pub buckets: Vec<Mutex<Vec<Entity>>>,
+    pub buckets: Vec<Mutex<Vec<usize>>>,
     pub table_size: usize,
 }
 
@@ -91,10 +91,10 @@ impl SpatialHashGrid {
         });
     }
 
-    /// エンティティを挿入
-    pub fn insert(&self, entity: Entity, pos: Vec3) {
+    /// パーティクルインデックスを挿入
+    pub fn insert(&self, index: usize, pos: Vec3) {
         let hash = self.hash(pos);
-        self.buckets[hash].lock().push(entity);
+        self.buckets[hash].lock().push(index);
     }
 
     #[allow(dead_code)]

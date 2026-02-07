@@ -12,11 +12,12 @@ use analysis::{update_distribution, CurrentDistribution, DistributionHistory};
 use gpu::{apply_gpu_results, GpuPhysicsPlugin};
 // use debug::debug_particles; // 必要時のみ有効化
 use physics::{
-    init_spatial_hash_grid, ContactHistory, MaterialProperties, PhysicsConstants, WallProperties,
+    init_spatial_hash_grid, ContactHistory, MaterialProperties, ParticleStore, PhysicsConstants,
+    WallProperties,
 };
 use rendering::{
-    camera_plugin, hide_particle_entities, setup_camera, setup_rendering, spawn_particles,
-    update_container_transforms, GpuInstancingPlugin,
+    camera_plugin, setup_camera, setup_rendering, spawn_particles, update_container_transforms,
+    GpuInstancingPlugin,
 };
 use simulation::{
     run_physics_substeps, update_oscillation_for_gpu, Container, OscillationParams, PhysicsBackend,
@@ -26,7 +27,7 @@ use ui::{
     handle_amplitude_buttons, handle_control_buttons, handle_frequency_buttons,
     handle_oscillation_toggle, handle_physics_backend_toggle, handle_reset, setup_bevy_ui_controls,
     setup_distribution_graph, update_button_colors, update_distribution_display,
-    update_graph_lines, update_simulation_time_display,
+    update_fps_display, update_graph_lines, update_simulation_time_display,
 };
 
 fn main() {
@@ -56,6 +57,7 @@ fn main() {
         .insert_resource(SimulationState::default())
         .insert_resource(SimulationTime::default())
         .insert_resource(SimulationSettings::default())
+        .insert_resource(ParticleStore::default())
         // スタートアップシステム（カメラはPreStartupで先に生成）
         .add_systems(PreStartup, setup_camera)
         .add_systems(PreStartup, init_spatial_hash_grid)
@@ -75,8 +77,6 @@ fn main() {
         )
         // 振動（GPU モード用。CPU モードはサブステップ内で更新）
         .add_systems(Update, update_oscillation_for_gpu)
-        // 個別パーティクルを非表示（インスタンシングで描画）
-        .add_systems(Update, hide_particle_entities)
         .add_systems(Update, update_container_transforms)
         .add_systems(Update, update_distribution)
         .add_systems(Update, handle_reset)
@@ -94,5 +94,6 @@ fn main() {
         .add_systems(Update, update_distribution_display)
         .add_systems(Update, update_graph_lines)
         .add_systems(Update, update_simulation_time_display)
+        .add_systems(Update, update_fps_display)
         .run();
 }

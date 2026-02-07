@@ -14,23 +14,23 @@ pub struct ContactState {
 /// 接触履歴を管理するリソース
 #[derive(Resource, Default)]
 pub struct ContactHistory {
-    /// キー: (min(entity_a, entity_b), max(entity_a, entity_b))
-    pub contacts: HashMap<(Entity, Entity), ContactState>,
+    /// キー: (min(index_a, index_b), max(index_a, index_b))
+    pub contacts: HashMap<(usize, usize), ContactState>,
 }
 
 impl ContactHistory {
     /// 接触ペアのキーを生成（順序を正規化）
-    pub fn key(e1: Entity, e2: Entity) -> (Entity, Entity) {
-        if e1 < e2 {
-            (e1, e2)
+    pub fn key(i: usize, j: usize) -> (usize, usize) {
+        if i < j {
+            (i, j)
         } else {
-            (e2, e1)
+            (j, i)
         }
     }
 
     /// 接触状態を取得または作成
-    pub fn get_or_create(&mut self, e1: Entity, e2: Entity) -> &mut ContactState {
-        let key = Self::key(e1, e2);
+    pub fn get_or_create(&mut self, i: usize, j: usize) -> &mut ContactState {
+        let key = Self::key(i, j);
         self.contacts.entry(key).or_default()
     }
 

@@ -1,6 +1,6 @@
 //! GPU → CPU 読み戻しモジュール
 //!
-//! GPU で計算した粒子位置を CPU に読み戻して、Main World の Position コンポーネントを更新する。
+//! GPU で計算した粒子位置を CPU に読み戻して、Main World の ParticleStore を更新する。
 //! 1フレームの遅延がある非同期読み戻し方式を使用。
 
 use bevy::{
@@ -87,24 +87,16 @@ impl ReadbackStaging {
     }
 }
 
-use super::plugin::GpuParticleData;
+use crate::physics::ParticleStore;
 
-/// Main World で Position コンポーネントを GPU 結果で更新するシステム
+/// Main World で ParticleStore を GPU 結果で更新するシステム
 pub fn apply_gpu_results(
     readback: Option<Res<GpuReadbackBuffer>>,
-    gpu_particle_data: Option<Res<GpuParticleData>>,
-    mut particles: Query<(
-        &mut crate::physics::Position,
-        &mut crate::physics::Velocity,
-        &mut crate::physics::AngularVelocity,
-    )>,
+    mut store: ResMut<ParticleStore>,
     mut last_frame: Local<u64>,
     mut debug_counter: Local<u32>,
 ) {
     let Some(readback) = readback else {
-        return;
-    };
-    let Some(gpu_particle_data) = gpu_particle_data else {
         return;
     };
 
@@ -119,13 +111,10 @@ pub fn apply_gpu_results(
     }
     *last_frame = current_frame;
 
-    // GPU データを取得
-    let gpu_data = {
-        let guard = readback.data.read().unwrap();
-        guard.clone()
-    };
+    // GPU データを read lock を保持したまま直接イテレート（clone 不要）
+    let guard = readback.data.read().unwrap();
 
-    if gpu_data.is_empty() {
+    if guard.is_empty() {
         return;
     }
 
@@ -134,12 +123,11 @@ pub fn apply_gpu_results(
     let do_debug = *debug_counter <= 10;
 
     if do_debug {
-        // GPU データの統計を収集
         let mut vel_nonzero = 0;
         let mut vel_y_nonzero = 0;
         let mut pos_nan = 0;
         let mut vel_nan = 0;
-        for p in gpu_data.iter() {
+        for p in guard.iter() {
             if p.vel[0] != 0.0 || p.vel[1] != 0.0 || p.vel[2] != 0.0 {
                 vel_nonzero += 1;
             }
@@ -157,61 +145,30 @@ pub fn apply_gpu_results(
         info!(
             "apply_gpu_results: frame={}, gpu_data={}, vel_nonzero={}, vel_y_nonzero={}, pos_nan={}, vel_nan={}",
             current_frame,
-            gpu_data.len(),
+            guard.len(),
             vel_nonzero,
             vel_y_nonzero,
             pos_nan,
             vel_nan,
         );
-
-        // 最初と最後の数粒子の値をサンプル出力
-        for i in [
-            0usize,
-            1,
-            2,
-            gpu_data.len() / 2,
-            gpu_data.len() - 2,
-            gpu_data.len() - 1,
-        ] {
-            if i < gpu_data.len() {
-                let p = &gpu_data[i];
-                info!(
-                    "  particle[{}]: pos=({:.4},{:.4},{:.4}) vel=({:.4},{:.4},{:.4}) r={:.4} mass_inv={:.4}",
-                    i, p.pos[0], p.pos[1], p.pos[2], p.vel[0], p.vel[1], p.vel[2], p.radius, p.mass_inv
-                );
-            }
-        }
     }
 
-    // Entity リストを使って Position と Velocity を更新
-    let mut updated = 0;
-    let mut not_found = 0;
+    // ParticleStore に直接書き込み（Entity lookup 不要）
+    let num = guard.len().min(store.particles.len());
     let mut actually_moved = 0;
-    for (i, entity) in gpu_particle_data.entities.iter().enumerate() {
-        if i >= gpu_data.len() {
-            break;
+    for i in 0..num {
+        let gp = &guard[i];
+        let p = &mut store.particles[i];
+        let new_pos = Vec3::new(gp.pos[0], gp.pos[1], gp.pos[2]);
+        if p.position != new_pos {
+            actually_moved += 1;
         }
-        if let Ok((mut pos, mut vel, mut angular_vel)) = particles.get_mut(*entity) {
-            let p = &gpu_data[i];
-            let new_pos = Vec3::new(p.pos[0], p.pos[1], p.pos[2]);
-            let new_vel = Vec3::new(p.vel[0], p.vel[1], p.vel[2]);
-            let new_omega = Vec3::new(p.omega[0], p.omega[1], p.omega[2]);
-            if pos.0 != new_pos {
-                actually_moved += 1;
-            }
-            pos.0 = new_pos;
-            vel.0 = new_vel;
-            angular_vel.0 = new_omega;
-            updated += 1;
-        } else {
-            not_found += 1;
-        }
+        p.position = new_pos;
+        p.velocity = Vec3::new(gp.vel[0], gp.vel[1], gp.vel[2]);
+        p.angular_velocity = Vec3::new(gp.omega[0], gp.omega[1], gp.omega[2]);
     }
 
     if do_debug {
-        info!(
-            "  -> updated={}, not_found={}, actually_moved={}",
-            updated, not_found, actually_moved
-        );
+        info!("  -> updated={}, actually_moved={}", num, actually_moved);
     }
 }

@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use std::collections::VecDeque;
 
-use crate::physics::{ParticleSize, Position};
+use crate::physics::{ParticleSize, ParticleStore};
 use crate::simulation::Container;
 
 /// 粒子分布の履歴
@@ -90,7 +90,7 @@ impl CurrentDistribution {
 
 /// 分布を更新するシステム
 pub fn update_distribution(
-    particles: Query<(&Position, &ParticleSize)>,
+    store: Res<ParticleStore>,
     container: Res<Container>,
     mut current: ResMut<CurrentDistribution>,
     mut history: ResMut<DistributionHistory>,
@@ -105,9 +105,9 @@ pub fn update_distribution(
     // 仕切りのX座標（中央 = 0）
     let divider_x = container.base_position.x;
 
-    for (pos, size) in particles.iter() {
-        let is_left = pos.0.x < divider_x;
-        match (size, is_left) {
+    for p in &store.particles {
+        let is_left = p.position.x < divider_x;
+        match (p.size, is_left) {
             (ParticleSize::Large, true) => current.left_large += 1,
             (ParticleSize::Large, false) => current.right_large += 1,
             (ParticleSize::Small, true) => current.left_small += 1,

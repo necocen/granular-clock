@@ -1,10 +1,10 @@
 use bevy::prelude::*;
 
-use crate::physics::{ParticleSize, Position, Velocity};
+use crate::physics::{ParticleSize, ParticleStore};
 
 /// デバッグ用：粒子の状態を出力
 #[allow(dead_code)]
-pub fn debug_particles(particles: Query<(&Position, &Velocity, &ParticleSize)>, time: Res<Time>) {
+pub fn debug_particles(store: Res<ParticleStore>, time: Res<Time>) {
     // 1秒ごとに出力
     if (time.elapsed_secs() as u32).is_multiple_of(2) {
         let mut large_count = 0;
@@ -13,14 +13,14 @@ pub fn debug_particles(particles: Query<(&Position, &Velocity, &ParticleSize)>, 
         let mut max_y = f32::MIN;
         let mut avg_vel = Vec3::ZERO;
 
-        for (pos, vel, size) in particles.iter() {
-            match size {
+        for p in &store.particles {
+            match p.size {
                 ParticleSize::Large => large_count += 1,
                 ParticleSize::Small => small_count += 1,
             }
-            min_y = min_y.min(pos.0.y);
-            max_y = max_y.max(pos.0.y);
-            avg_vel += vel.0;
+            min_y = min_y.min(p.position.y);
+            max_y = max_y.max(p.position.y);
+            avg_vel += p.velocity;
         }
 
         let total = large_count + small_count;

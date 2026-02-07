@@ -33,7 +33,7 @@ use bevy::{
 use bytemuck::{Pod, Zeroable};
 
 use crate::gpu::GpuPhysicsBuffers;
-use crate::physics::{ParticleProperties, ParticleSize, Position};
+use crate::physics::{ParticleSize, ParticleStore};
 use crate::rendering::ParticleMeshes;
 use crate::simulation::PhysicsBackend;
 use crate::simulation::SimulationConfig;
@@ -322,10 +322,10 @@ fn sync_particle_counts(
     counts.small_color = [0.2, 0.2, 0.8, 1.0]; // 青
 }
 
-/// Build instance data from ECS (CPU mode)
+/// Build instance data from ParticleStore (CPU mode)
 fn build_cpu_instance_data(
     backend: Res<PhysicsBackend>,
-    particles: Query<(&Position, &ParticleProperties, &ParticleSize)>,
+    store: Res<ParticleStore>,
     mut cpu_data: ResMut<CpuInstanceData>,
 ) {
     if *backend != PhysicsBackend::Cpu {
@@ -334,13 +334,13 @@ fn build_cpu_instance_data(
     }
 
     cpu_data.0.clear();
-    for (pos, props, size) in &particles {
-        let color = match size {
+    for p in &store.particles {
+        let color = match p.size {
             ParticleSize::Large => [0.8, 0.2, 0.2, 1.0],
             ParticleSize::Small => [0.2, 0.2, 0.8, 1.0],
         };
         cpu_data.0.push(InstanceData {
-            pos_scale: [pos.0.x, pos.0.y, pos.0.z, props.radius],
+            pos_scale: [p.position.x, p.position.y, p.position.z, p.radius],
             color,
         });
     }
@@ -356,15 +356,6 @@ fn spawn_particle_batch(mut commands: Commands, meshes: Res<ParticleMeshes>) {
         NoFrustumCulling,
         // No MeshMaterial3d → Bevy's standard mesh rendering won't draw this
     ));
-}
-
-/// Hide individual particle entities (instancing handles all rendering)
-pub fn hide_particle_entities(
-    mut particles: Query<&mut Visibility, (Added<Position>, Without<ParticleBatchMarker>)>,
-) {
-    for mut v in &mut particles {
-        *v = Visibility::Hidden;
-    }
 }
 
 // ──────────────────── Render World systems ────────────────────

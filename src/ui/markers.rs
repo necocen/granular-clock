@@ -44,3 +44,6 @@ pub struct PhysicsBackendToggleButton;
 
 #[derive(Component)]
 pub struct PhysicsBackendText;
+
+#[derive(Component)]
+pub struct FpsText;

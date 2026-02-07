@@ -50,7 +50,7 @@ pub struct SimulationSettings {
 impl Default for SimulationSettings {
     fn default() -> Self {
         Self {
-            substeps_per_frame: 8, // デフォルトで8サブステップ/フレーム
+            substeps_per_frame: 10, // 10サブステップ/フレーム
         }
     }
 }
