@@ -6,6 +6,6 @@ mod readback;
 #[cfg(test)]
 mod tests;
 
-pub use buffers::{GpuPhysicsBuffers, ParticleGpu, SimulationParams};
+pub use buffers::GpuPhysicsBuffers;
 pub use plugin::GpuPhysicsPlugin;
-pub use readback::{apply_gpu_results, GpuReadbackBuffer};
+pub use readback::apply_gpu_results;

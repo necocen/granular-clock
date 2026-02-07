@@ -3,7 +3,9 @@ mod tests {
     use bevy::prelude::*;
 
     use crate::physics::collision::{compute_wall_contact_force, WallProperties};
-    use crate::physics::contact::{compute_particle_contact_force, ContactState, MaterialProperties};
+    use crate::physics::contact::{
+        compute_particle_contact_force, ContactState, MaterialProperties,
+    };
     use crate::physics::integrator::{
         clamp_to_container, clamp_velocity, integrate_first_half, integrate_second_half,
     };
@@ -23,7 +25,8 @@ mod tests {
         let vel = Vec3::new(0.0, -1.0, 0.0); // 下向きに移動中
         let omega = Vec3::ZERO;
 
-        let result = compute_wall_contact_force(pos, vel, omega, radius, mass, &container, &wall_props);
+        let result =
+            compute_wall_contact_force(pos, vel, omega, radius, mass, &container, &wall_props);
 
         // 上向きの力を受けるはず
         assert!(
@@ -50,7 +53,8 @@ mod tests {
         let vel = Vec3::ZERO;
         let omega = Vec3::ZERO;
 
-        let result = compute_wall_contact_force(pos, vel, omega, radius, mass, &container, &wall_props);
+        let result =
+            compute_wall_contact_force(pos, vel, omega, radius, mass, &container, &wall_props);
 
         assert!(
             result.force.length() < 1e-6,
@@ -178,8 +182,12 @@ mod tests {
         let initial_pos = pos;
 
         // 1ステップ積分
-        integrate_first_half(&mut pos, &mut vel, &mut omega, force, torque, mass, inertia, gravity, dt);
-        integrate_second_half(&mut vel, &mut omega, force, torque, mass, inertia, gravity, dt);
+        integrate_first_half(
+            &mut pos, &mut vel, &mut omega, force, torque, mass, inertia, gravity, dt,
+        );
+        integrate_second_half(
+            &mut vel, &mut omega, force, torque, mass, inertia, gravity, dt,
+        );
 
         // 下向きに速度が増加
         assert!(vel.y < 0.0, "Velocity should be downward, got: {:?}", vel);
@@ -210,8 +218,12 @@ mod tests {
         let force = Vec3::new(1.0, 0.0, 0.0); // X方向に1Nの力
         let torque = Vec3::ZERO;
 
-        integrate_first_half(&mut pos, &mut vel, &mut omega, force, torque, mass, inertia, gravity, dt);
-        integrate_second_half(&mut vel, &mut omega, force, torque, mass, inertia, gravity, dt);
+        integrate_first_half(
+            &mut pos, &mut vel, &mut omega, force, torque, mass, inertia, gravity, dt,
+        );
+        integrate_second_half(
+            &mut vel, &mut omega, force, torque, mass, inertia, gravity, dt,
+        );
 
         // X方向に加速
         assert!(vel.x > 0.0, "Velocity should increase in X, got: {:?}", vel);
@@ -241,7 +253,8 @@ mod tests {
         let vel = Vec3::new(0.0, -10.0, 0.0); // 高速で下向き
         let omega = Vec3::ZERO;
 
-        let result = compute_wall_contact_force(pos, vel, omega, radius, mass, &container, &wall_props);
+        let result =
+            compute_wall_contact_force(pos, vel, omega, radius, mass, &container, &wall_props);
 
         // 力が有限値であること
         assert!(
@@ -347,41 +360,51 @@ mod tests {
         // 実際のシミュレーションと同じ順序：力計算→位置更新→力計算→速度更新
         for step in 0..600 {
             // 前半：力計算→位置更新
-            let wall_force1 = compute_wall_contact_force(
-                pos, vel, omega, radius, mass, &container, &wall_props
-            );
+            let wall_force1 =
+                compute_wall_contact_force(pos, vel, omega, radius, mass, &container, &wall_props);
             integrate_first_half(
-                &mut pos, &mut vel, &mut omega,
-                wall_force1.force, wall_force1.torque,
-                mass, inertia, gravity, dt
+                &mut pos,
+                &mut vel,
+                &mut omega,
+                wall_force1.force,
+                wall_force1.torque,
+                mass,
+                inertia,
+                gravity,
+                dt,
             );
             // 位置と速度をクランプ
             clamp_to_container(&mut pos, &mut vel, radius, box_min, box_max);
             clamp_velocity(&mut vel, &mut omega, 10.0, 100.0);
 
             // 後半：力計算→速度更新
-            let wall_force2 = compute_wall_contact_force(
-                pos, vel, omega, radius, mass, &container, &wall_props
-            );
+            let wall_force2 =
+                compute_wall_contact_force(pos, vel, omega, radius, mass, &container, &wall_props);
             integrate_second_half(
-                &mut vel, &mut omega,
-                wall_force2.force, wall_force2.torque,
-                mass, inertia, gravity, dt
+                &mut vel,
+                &mut omega,
+                wall_force2.force,
+                wall_force2.torque,
+                mass,
+                inertia,
+                gravity,
+                dt,
             );
             // 速度をクランプ
             clamp_velocity(&mut vel, &mut omega, 10.0, 100.0);
-
 
             // 値が有限であることを確認
             assert!(
                 pos.is_finite(),
                 "Position became NaN/Inf at step {}: {:?}",
-                step, pos
+                step,
+                pos
             );
             assert!(
                 vel.is_finite(),
                 "Velocity became NaN/Inf at step {}: {:?}",
-                step, vel
+                step,
+                vel
             );
 
             // 粒子がコンテナ内に収まっていることを確認（少しのマージンを許容）
@@ -389,17 +412,26 @@ mod tests {
             assert!(
                 pos.x >= box_min.x - margin && pos.x <= box_max.x + margin,
                 "Particle escaped X bounds at step {}: pos={:?}, bounds=[{}, {}]",
-                step, pos, box_min.x, box_max.x
+                step,
+                pos,
+                box_min.x,
+                box_max.x
             );
             assert!(
                 pos.y >= box_min.y - margin && pos.y <= box_max.y + margin,
                 "Particle escaped Y bounds at step {}: pos={:?}, bounds=[{}, {}]",
-                step, pos, box_min.y, box_max.y
+                step,
+                pos,
+                box_min.y,
+                box_max.y
             );
             assert!(
                 pos.z >= box_min.z - margin && pos.z <= box_max.z + margin,
                 "Particle escaped Z bounds at step {}: pos={:?}, bounds=[{}, {}]",
-                step, pos, box_min.z, box_max.z
+                step,
+                pos,
+                box_min.z,
+                box_max.z
             );
         }
 
@@ -407,7 +439,9 @@ mod tests {
         assert!(
             pos.y >= box_min.y - radius && pos.y <= box_max.y + radius,
             "Particle should be within container at end, got y={}, bounds=[{}, {}]",
-            pos.y, box_min.y, box_max.y
+            pos.y,
+            box_min.y,
+            box_max.y
         );
 
         // 速度が発散していないことを確認
@@ -421,7 +455,7 @@ mod tests {
     /// 複数粒子の初期配置から時間発展しても箱から飛び出さないことをテスト
     #[test]
     fn test_multiple_particles_stay_in_container() {
-        use crate::rendering::SimulationConfig;
+        use crate::simulation::SimulationConfig;
         use rand::Rng;
         use std::f32::consts::PI;
 
@@ -493,8 +527,12 @@ mod tests {
         let box_min = container.base_position - container.half_extents;
         let box_max = container.base_position + container.half_extents;
 
-        println!("Testing {} particles in container [{:?} to {:?}]",
-            particles.len(), box_min, box_max);
+        println!(
+            "Testing {} particles in container [{:?} to {:?}]",
+            particles.len(),
+            box_min,
+            box_max
+        );
 
         // 接触状態を管理
         let mut contact_states: std::collections::HashMap<(usize, usize), ContactState> =
@@ -509,7 +547,13 @@ mod tests {
             // 壁との衝突力
             for (i, p) in particles.iter().enumerate() {
                 let wall_force = compute_wall_contact_force(
-                    p.pos, p.vel, p.omega, p.radius, p.mass, &container, &wall_props
+                    p.pos,
+                    p.vel,
+                    p.omega,
+                    p.radius,
+                    p.mass,
+                    &container,
+                    &wall_props,
                 );
                 forces[i] += wall_force.force;
                 torques[i] += wall_force.torque;
@@ -525,9 +569,19 @@ mod tests {
                     let contact_state = contact_states.entry(key).or_default();
 
                     let (force_i, force_j) = compute_particle_contact_force(
-                        pi.pos, pi.vel, pi.omega, pi.radius, pi.mass,
-                        pj.pos, pj.vel, pj.omega, pj.radius, pj.mass,
-                        &material, contact_state, dt
+                        pi.pos,
+                        pi.vel,
+                        pi.omega,
+                        pi.radius,
+                        pi.mass,
+                        pj.pos,
+                        pj.vel,
+                        pj.omega,
+                        pj.radius,
+                        pj.mass,
+                        &material,
+                        contact_state,
+                        dt,
                     );
 
                     forces[i] += force_i.force;
@@ -540,8 +594,15 @@ mod tests {
             // 積分（前半）
             for (i, p) in particles.iter_mut().enumerate() {
                 integrate_first_half(
-                    &mut p.pos, &mut p.vel, &mut p.omega,
-                    forces[i], torques[i], p.mass, p.inertia, gravity, dt
+                    &mut p.pos,
+                    &mut p.vel,
+                    &mut p.omega,
+                    forces[i],
+                    torques[i],
+                    p.mass,
+                    p.inertia,
+                    gravity,
+                    dt,
                 );
                 // 位置と速度をクランプ
                 clamp_to_container(&mut p.pos, &mut p.vel, p.radius, box_min, box_max);
@@ -554,7 +615,13 @@ mod tests {
 
             for (i, p) in particles.iter().enumerate() {
                 let wall_force = compute_wall_contact_force(
-                    p.pos, p.vel, p.omega, p.radius, p.mass, &container, &wall_props
+                    p.pos,
+                    p.vel,
+                    p.omega,
+                    p.radius,
+                    p.mass,
+                    &container,
+                    &wall_props,
                 );
                 forces[i] += wall_force.force;
                 torques[i] += wall_force.torque;
@@ -569,9 +636,19 @@ mod tests {
                     let contact_state = contact_states.entry(key).or_default();
 
                     let (force_i, force_j) = compute_particle_contact_force(
-                        pi.pos, pi.vel, pi.omega, pi.radius, pi.mass,
-                        pj.pos, pj.vel, pj.omega, pj.radius, pj.mass,
-                        &material, contact_state, dt
+                        pi.pos,
+                        pi.vel,
+                        pi.omega,
+                        pi.radius,
+                        pi.mass,
+                        pj.pos,
+                        pj.vel,
+                        pj.omega,
+                        pj.radius,
+                        pj.mass,
+                        &material,
+                        contact_state,
+                        dt,
                     );
 
                     forces[i] += force_i.force;
@@ -584,8 +661,14 @@ mod tests {
             // 積分（後半）
             for (i, p) in particles.iter_mut().enumerate() {
                 integrate_second_half(
-                    &mut p.vel, &mut p.omega,
-                    forces[i], torques[i], p.mass, p.inertia, gravity, dt
+                    &mut p.vel,
+                    &mut p.omega,
+                    forces[i],
+                    torques[i],
+                    p.mass,
+                    p.inertia,
+                    gravity,
+                    dt,
                 );
                 // 速度をクランプ
                 clamp_velocity(&mut p.vel, &mut p.omega, 10.0, 100.0);
@@ -598,12 +681,16 @@ mod tests {
                 assert!(
                     p.pos.is_finite(),
                     "Particle {} position became NaN/Inf at step {}: {:?}",
-                    i, step, p.pos
+                    i,
+                    step,
+                    p.pos
                 );
                 assert!(
                     p.vel.is_finite(),
                     "Particle {} velocity became NaN/Inf at step {}: {:?}",
-                    i, step, p.vel
+                    i,
+                    step,
+                    p.vel
                 );
 
                 if p.pos.x < box_min.x - margin || p.pos.x > box_max.x + margin {
@@ -628,30 +715,41 @@ mod tests {
 
             // 進捗表示
             if step % 30 == 0 {
-                let max_vel = particles.iter().map(|p| p.vel.length()).fold(0.0f32, f32::max);
+                let max_vel = particles
+                    .iter()
+                    .map(|p| p.vel.length())
+                    .fold(0.0f32, f32::max);
                 let min_y = particles.iter().map(|p| p.pos.y).fold(f32::MAX, f32::min);
                 let max_y = particles.iter().map(|p| p.pos.y).fold(f32::MIN, f32::max);
-                println!("Step {}: Y range [{:.3}, {:.3}], max vel {:.2}",
-                    step, min_y, max_y, max_vel);
+                println!(
+                    "Step {}: Y range [{:.3}, {:.3}], max vel {:.2}",
+                    step, min_y, max_y, max_vel
+                );
             }
         }
 
-        println!("All {} particles stayed within container bounds!", particles.len());
+        println!(
+            "All {} particles stayed within container bounds!",
+            particles.len()
+        );
     }
 
     /// コンテナサイズと粒子数の関係をテスト
     #[test]
     fn test_container_capacity() {
-        use crate::rendering::SimulationConfig;
+        use crate::simulation::SimulationConfig;
         use std::f32::consts::PI;
 
         let container = Container::default();
         let config = SimulationConfig::default();
 
         // コンテナの体積
-        let container_volume = container.half_extents.x * 2.0
-            * container.half_extents.y * 2.0
-            * container.half_extents.z * 2.0;
+        let container_volume = container.half_extents.x
+            * 2.0
+            * container.half_extents.y
+            * 2.0
+            * container.half_extents.z
+            * 2.0;
 
         // 粒子の総体積
         let large_volume = (4.0 / 3.0) * PI * config.large_radius.powi(3);
@@ -662,7 +760,11 @@ mod tests {
         // 充填率（ランダム充填の理論最大は約64%）
         let packing_fraction = total_particle_volume / container_volume;
 
-        println!("Container volume: {} m³ ({} liters)", container_volume, container_volume * 1000.0);
+        println!(
+            "Container volume: {} m³ ({} liters)",
+            container_volume,
+            container_volume * 1000.0
+        );
         println!("Total particle volume: {} m³", total_particle_volume);
         println!("Packing fraction: {:.1}%", packing_fraction * 100.0);
 
@@ -712,7 +814,10 @@ mod tests {
             + mass * gravity.length() * (pos.y - floor_y - radius); // Include potential energy
 
         println!("Initial total energy: {:.6} J", initial_energy);
-        println!("Wall damping: {}, friction: {}", wall_props.damping, wall_props.friction);
+        println!(
+            "Wall damping: {}, friction: {}",
+            wall_props.damping, wall_props.friction
+        );
 
         let mut energy_history: Vec<(f32, f32, f32)> = Vec::new(); // (time, kinetic, potential)
 
@@ -729,29 +834,43 @@ mod tests {
                 energy_history.push((time, ke, pe));
                 println!(
                     "t={:.1}s: KE={:.6}J, PE={:.6}J, Total={:.6}J, vel={:.4}m/s, y={:.4}m",
-                    time, ke, pe, ke + pe, vel.length(), pos.y
+                    time,
+                    ke,
+                    pe,
+                    ke + pe,
+                    vel.length(),
+                    pos.y
                 );
             }
 
             // Physics step (simplified - wall collision only)
-            let wall_force1 = compute_wall_contact_force(
-                pos, vel, omega, radius, mass, &container, &wall_props
-            );
+            let wall_force1 =
+                compute_wall_contact_force(pos, vel, omega, radius, mass, &container, &wall_props);
             integrate_first_half(
-                &mut pos, &mut vel, &mut omega,
-                wall_force1.force, wall_force1.torque,
-                mass, inertia, gravity, dt
+                &mut pos,
+                &mut vel,
+                &mut omega,
+                wall_force1.force,
+                wall_force1.torque,
+                mass,
+                inertia,
+                gravity,
+                dt,
             );
             clamp_to_container(&mut pos, &mut vel, radius, box_min, box_max);
             clamp_velocity(&mut vel, &mut omega, 10.0, 100.0);
 
-            let wall_force2 = compute_wall_contact_force(
-                pos, vel, omega, radius, mass, &container, &wall_props
-            );
+            let wall_force2 =
+                compute_wall_contact_force(pos, vel, omega, radius, mass, &container, &wall_props);
             integrate_second_half(
-                &mut vel, &mut omega,
-                wall_force2.force, wall_force2.torque,
-                mass, inertia, gravity, dt
+                &mut vel,
+                &mut omega,
+                wall_force2.force,
+                wall_force2.torque,
+                mass,
+                inertia,
+                gravity,
+                dt,
             );
             clamp_velocity(&mut vel, &mut omega, 10.0, 100.0);
         }
@@ -766,7 +885,10 @@ mod tests {
         println!("  Angular velocity: {:?}", omega);
         println!("  Final KE: {:.6} J", final_ke);
         println!("  Final total energy: {:.6} J", final_energy);
-        println!("  Energy dissipated: {:.2}%", (1.0 - final_energy / initial_energy) * 100.0);
+        println!(
+            "  Energy dissipated: {:.2}%",
+            (1.0 - final_energy / initial_energy) * 100.0
+        );
 
         // Check that energy has decreased significantly
         assert!(
@@ -809,25 +931,73 @@ mod tests {
 
         // 10 particles in a small area with random velocities
         let mut particles = vec![
-            Particle { pos: Vec3::new(-0.02, floor_y + radius + 0.05, 0.0), vel: Vec3::new(0.3, 0.0, 0.1), omega: Vec3::ZERO },
-            Particle { pos: Vec3::new(0.02, floor_y + radius + 0.05, 0.0), vel: Vec3::new(-0.2, 0.1, 0.0), omega: Vec3::ZERO },
-            Particle { pos: Vec3::new(0.0, floor_y + radius + 0.08, 0.02), vel: Vec3::new(0.1, -0.1, 0.2), omega: Vec3::ZERO },
-            Particle { pos: Vec3::new(0.0, floor_y + radius + 0.08, -0.02), vel: Vec3::new(-0.1, 0.0, -0.3), omega: Vec3::ZERO },
-            Particle { pos: Vec3::new(0.0, floor_y + radius + 0.11, 0.0), vel: Vec3::new(0.0, -0.2, 0.0), omega: Vec3::ZERO },
-            Particle { pos: Vec3::new(-0.03, floor_y + radius + 0.02, 0.02), vel: Vec3::new(0.2, 0.1, -0.1), omega: Vec3::ZERO },
-            Particle { pos: Vec3::new(0.03, floor_y + radius + 0.02, -0.02), vel: Vec3::new(-0.15, 0.0, 0.15), omega: Vec3::ZERO },
-            Particle { pos: Vec3::new(-0.01, floor_y + radius + 0.06, -0.03), vel: Vec3::new(0.0, 0.05, 0.2), omega: Vec3::ZERO },
-            Particle { pos: Vec3::new(0.01, floor_y + radius + 0.06, 0.03), vel: Vec3::new(0.1, -0.05, -0.1), omega: Vec3::ZERO },
-            Particle { pos: Vec3::new(0.0, floor_y + radius + 0.14, 0.0), vel: Vec3::new(0.0, 0.0, 0.0), omega: Vec3::ZERO },
+            Particle {
+                pos: Vec3::new(-0.02, floor_y + radius + 0.05, 0.0),
+                vel: Vec3::new(0.3, 0.0, 0.1),
+                omega: Vec3::ZERO,
+            },
+            Particle {
+                pos: Vec3::new(0.02, floor_y + radius + 0.05, 0.0),
+                vel: Vec3::new(-0.2, 0.1, 0.0),
+                omega: Vec3::ZERO,
+            },
+            Particle {
+                pos: Vec3::new(0.0, floor_y + radius + 0.08, 0.02),
+                vel: Vec3::new(0.1, -0.1, 0.2),
+                omega: Vec3::ZERO,
+            },
+            Particle {
+                pos: Vec3::new(0.0, floor_y + radius + 0.08, -0.02),
+                vel: Vec3::new(-0.1, 0.0, -0.3),
+                omega: Vec3::ZERO,
+            },
+            Particle {
+                pos: Vec3::new(0.0, floor_y + radius + 0.11, 0.0),
+                vel: Vec3::new(0.0, -0.2, 0.0),
+                omega: Vec3::ZERO,
+            },
+            Particle {
+                pos: Vec3::new(-0.03, floor_y + radius + 0.02, 0.02),
+                vel: Vec3::new(0.2, 0.1, -0.1),
+                omega: Vec3::ZERO,
+            },
+            Particle {
+                pos: Vec3::new(0.03, floor_y + radius + 0.02, -0.02),
+                vel: Vec3::new(-0.15, 0.0, 0.15),
+                omega: Vec3::ZERO,
+            },
+            Particle {
+                pos: Vec3::new(-0.01, floor_y + radius + 0.06, -0.03),
+                vel: Vec3::new(0.0, 0.05, 0.2),
+                omega: Vec3::ZERO,
+            },
+            Particle {
+                pos: Vec3::new(0.01, floor_y + radius + 0.06, 0.03),
+                vel: Vec3::new(0.1, -0.05, -0.1),
+                omega: Vec3::ZERO,
+            },
+            Particle {
+                pos: Vec3::new(0.0, floor_y + radius + 0.14, 0.0),
+                vel: Vec3::new(0.0, 0.0, 0.0),
+                omega: Vec3::ZERO,
+            },
         ];
 
         // Calculate initial kinetic energy
-        let initial_ke: f32 = particles.iter()
+        let initial_ke: f32 = particles
+            .iter()
             .map(|p| kinetic_energy(p.vel, p.omega, mass, inertia))
             .sum();
 
-        println!("Initial kinetic energy: {:.6} J with {} particles", initial_ke, particles.len());
-        println!("Material: restitution={}, friction={}", material.restitution, material.friction);
+        println!(
+            "Initial kinetic energy: {:.6} J with {} particles",
+            initial_ke,
+            particles.len()
+        );
+        println!(
+            "Material: restitution={}, friction={}",
+            material.restitution, material.friction
+        );
 
         let mut contact_states: std::collections::HashMap<(usize, usize), ContactState> =
             std::collections::HashMap::new();
@@ -838,10 +1008,14 @@ mod tests {
             let time = step as f32 * dt;
 
             // Calculate and record energy
-            let total_ke: f32 = particles.iter()
+            let total_ke: f32 = particles
+                .iter()
                 .map(|p| kinetic_energy(p.vel, p.omega, mass, inertia))
                 .sum();
-            let max_vel = particles.iter().map(|p| p.vel.length()).fold(0.0f32, f32::max);
+            let max_vel = particles
+                .iter()
+                .map(|p| p.vel.length())
+                .fold(0.0f32, f32::max);
 
             if step % 120 == 0 {
                 println!(
@@ -857,7 +1031,13 @@ mod tests {
             // Wall forces
             for (i, p) in particles.iter().enumerate() {
                 let wall_force = compute_wall_contact_force(
-                    p.pos, p.vel, p.omega, radius, mass, &container, &wall_props
+                    p.pos,
+                    p.vel,
+                    p.omega,
+                    radius,
+                    mass,
+                    &container,
+                    &wall_props,
                 );
                 forces[i] += wall_force.force;
                 torques[i] += wall_force.torque;
@@ -873,9 +1053,19 @@ mod tests {
                     let contact_state = contact_states.entry(key).or_default();
 
                     let (force_i, force_j) = compute_particle_contact_force(
-                        pi.pos, pi.vel, pi.omega, radius, mass,
-                        pj.pos, pj.vel, pj.omega, radius, mass,
-                        &material, contact_state, dt
+                        pi.pos,
+                        pi.vel,
+                        pi.omega,
+                        radius,
+                        mass,
+                        pj.pos,
+                        pj.vel,
+                        pj.omega,
+                        radius,
+                        mass,
+                        &material,
+                        contact_state,
+                        dt,
                     );
 
                     forces[i] += force_i.force;
@@ -888,8 +1078,15 @@ mod tests {
             // Integrate first half
             for (i, p) in particles.iter_mut().enumerate() {
                 integrate_first_half(
-                    &mut p.pos, &mut p.vel, &mut p.omega,
-                    forces[i], torques[i], mass, inertia, gravity, dt
+                    &mut p.pos,
+                    &mut p.vel,
+                    &mut p.omega,
+                    forces[i],
+                    torques[i],
+                    mass,
+                    inertia,
+                    gravity,
+                    dt,
                 );
                 clamp_to_container(&mut p.pos, &mut p.vel, radius, box_min, box_max);
                 clamp_velocity(&mut p.vel, &mut p.omega, 10.0, 100.0);
@@ -901,7 +1098,13 @@ mod tests {
 
             for (i, p) in particles.iter().enumerate() {
                 let wall_force = compute_wall_contact_force(
-                    p.pos, p.vel, p.omega, radius, mass, &container, &wall_props
+                    p.pos,
+                    p.vel,
+                    p.omega,
+                    radius,
+                    mass,
+                    &container,
+                    &wall_props,
                 );
                 forces[i] += wall_force.force;
                 torques[i] += wall_force.torque;
@@ -916,9 +1119,19 @@ mod tests {
                     let contact_state = contact_states.entry(key).or_default();
 
                     let (force_i, force_j) = compute_particle_contact_force(
-                        pi.pos, pi.vel, pi.omega, radius, mass,
-                        pj.pos, pj.vel, pj.omega, radius, mass,
-                        &material, contact_state, dt
+                        pi.pos,
+                        pi.vel,
+                        pi.omega,
+                        radius,
+                        mass,
+                        pj.pos,
+                        pj.vel,
+                        pj.omega,
+                        radius,
+                        mass,
+                        &material,
+                        contact_state,
+                        dt,
                     );
 
                     forces[i] += force_i.force;
@@ -931,22 +1144,35 @@ mod tests {
             // Integrate second half
             for (i, p) in particles.iter_mut().enumerate() {
                 integrate_second_half(
-                    &mut p.vel, &mut p.omega,
-                    forces[i], torques[i], mass, inertia, gravity, dt
+                    &mut p.vel,
+                    &mut p.omega,
+                    forces[i],
+                    torques[i],
+                    mass,
+                    inertia,
+                    gravity,
+                    dt,
                 );
                 clamp_velocity(&mut p.vel, &mut p.omega, 10.0, 100.0);
             }
         }
 
-        let final_ke: f32 = particles.iter()
+        let final_ke: f32 = particles
+            .iter()
             .map(|p| kinetic_energy(p.vel, p.omega, mass, inertia))
             .sum();
-        let max_final_vel = particles.iter().map(|p| p.vel.length()).fold(0.0f32, f32::max);
+        let max_final_vel = particles
+            .iter()
+            .map(|p| p.vel.length())
+            .fold(0.0f32, f32::max);
 
         println!("\nFinal state after 10s:");
         println!("  Final KE: {:.6} J (was {:.6} J)", final_ke, initial_ke);
         println!("  Max velocity: {:.6} m/s", max_final_vel);
-        println!("  Energy remaining: {:.2}%", (final_ke / initial_ke) * 100.0);
+        println!(
+            "  Energy remaining: {:.2}%",
+            (final_ke / initial_ke) * 100.0
+        );
     }
 
     /// Test settling behavior after oscillation stops
@@ -979,11 +1205,31 @@ mod tests {
         // Divider extends from x=-0.005 to x=+0.005, particle radius=0.02
         // So keep |x| > 0.025 to avoid divider interaction
         let mut particles = vec![
-            Particle { pos: Vec3::new(-0.10, floor_y + radius + 0.001, 0.0), vel: Vec3::ZERO, omega: Vec3::ZERO },
-            Particle { pos: Vec3::new(-0.15, floor_y + radius + 0.001, 0.0), vel: Vec3::ZERO, omega: Vec3::ZERO },
-            Particle { pos: Vec3::new(0.10, floor_y + radius + 0.001, 0.0), vel: Vec3::ZERO, omega: Vec3::ZERO },
-            Particle { pos: Vec3::new(-0.20, floor_y + radius * 3.0, 0.0), vel: Vec3::ZERO, omega: Vec3::ZERO },
-            Particle { pos: Vec3::new(0.15, floor_y + radius * 3.0, 0.0), vel: Vec3::ZERO, omega: Vec3::ZERO },
+            Particle {
+                pos: Vec3::new(-0.10, floor_y + radius + 0.001, 0.0),
+                vel: Vec3::ZERO,
+                omega: Vec3::ZERO,
+            },
+            Particle {
+                pos: Vec3::new(-0.15, floor_y + radius + 0.001, 0.0),
+                vel: Vec3::ZERO,
+                omega: Vec3::ZERO,
+            },
+            Particle {
+                pos: Vec3::new(0.10, floor_y + radius + 0.001, 0.0),
+                vel: Vec3::ZERO,
+                omega: Vec3::ZERO,
+            },
+            Particle {
+                pos: Vec3::new(-0.20, floor_y + radius * 3.0, 0.0),
+                vel: Vec3::ZERO,
+                omega: Vec3::ZERO,
+            },
+            Particle {
+                pos: Vec3::new(0.15, floor_y + radius * 3.0, 0.0),
+                vel: Vec3::ZERO,
+                omega: Vec3::ZERO,
+            },
         ];
 
         let mut contact_states: std::collections::HashMap<(usize, usize), ContactState> =
@@ -995,7 +1241,10 @@ mod tests {
         let mut osc_phase = 0.0f32;
         let mut oscillation_enabled = true;
 
-        println!("Starting oscillation test: amplitude={:.3}m, frequency={}Hz", osc_amplitude, osc_frequency);
+        println!(
+            "Starting oscillation test: amplitude={:.3}m, frequency={}Hz",
+            osc_amplitude, osc_frequency
+        );
 
         // Phase 1: Oscillate for 3 seconds
         let oscillation_steps = 6000; // 3 seconds at 2000Hz
@@ -1023,7 +1272,13 @@ mod tests {
 
             for (i, p) in particles.iter().enumerate() {
                 let wall_force = compute_wall_contact_force(
-                    p.pos, p.vel, p.omega, radius, mass, &container, &wall_props
+                    p.pos,
+                    p.vel,
+                    p.omega,
+                    radius,
+                    mass,
+                    &container,
+                    &wall_props,
                 );
                 forces[i] += wall_force.force;
                 torques[i] += wall_force.torque;
@@ -1037,9 +1292,19 @@ mod tests {
                     let contact_state = contact_states.entry(key).or_default();
 
                     let (force_i, force_j) = compute_particle_contact_force(
-                        pi.pos, pi.vel, pi.omega, radius, mass,
-                        pj.pos, pj.vel, pj.omega, radius, mass,
-                        &material, contact_state, dt
+                        pi.pos,
+                        pi.vel,
+                        pi.omega,
+                        radius,
+                        mass,
+                        pj.pos,
+                        pj.vel,
+                        pj.omega,
+                        radius,
+                        mass,
+                        &material,
+                        contact_state,
+                        dt,
                     );
 
                     forces[i] += force_i.force;
@@ -1052,8 +1317,15 @@ mod tests {
             // Integrate
             for (i, p) in particles.iter_mut().enumerate() {
                 integrate_first_half(
-                    &mut p.pos, &mut p.vel, &mut p.omega,
-                    forces[i], torques[i], mass, inertia, gravity, dt
+                    &mut p.pos,
+                    &mut p.vel,
+                    &mut p.omega,
+                    forces[i],
+                    torques[i],
+                    mass,
+                    inertia,
+                    gravity,
+                    dt,
                 );
                 clamp_to_container(&mut p.pos, &mut p.vel, radius, box_min, box_max);
                 clamp_velocity(&mut p.vel, &mut p.omega, 10.0, 100.0);
@@ -1064,7 +1336,13 @@ mod tests {
 
             for (i, p) in particles.iter().enumerate() {
                 let wall_force = compute_wall_contact_force(
-                    p.pos, p.vel, p.omega, radius, mass, &container, &wall_props
+                    p.pos,
+                    p.vel,
+                    p.omega,
+                    radius,
+                    mass,
+                    &container,
+                    &wall_props,
                 );
                 forces[i] += wall_force.force;
                 torques[i] += wall_force.torque;
@@ -1078,9 +1356,19 @@ mod tests {
                     let contact_state = contact_states.entry(key).or_default();
 
                     let (force_i, force_j) = compute_particle_contact_force(
-                        pi.pos, pi.vel, pi.omega, radius, mass,
-                        pj.pos, pj.vel, pj.omega, radius, mass,
-                        &material, contact_state, dt
+                        pi.pos,
+                        pi.vel,
+                        pi.omega,
+                        radius,
+                        mass,
+                        pj.pos,
+                        pj.vel,
+                        pj.omega,
+                        radius,
+                        mass,
+                        &material,
+                        contact_state,
+                        dt,
                     );
 
                     forces[i] += force_i.force;
@@ -1092,28 +1380,44 @@ mod tests {
 
             for (i, p) in particles.iter_mut().enumerate() {
                 integrate_second_half(
-                    &mut p.vel, &mut p.omega,
-                    forces[i], torques[i], mass, inertia, gravity, dt
+                    &mut p.vel,
+                    &mut p.omega,
+                    forces[i],
+                    torques[i],
+                    mass,
+                    inertia,
+                    gravity,
+                    dt,
                 );
                 clamp_velocity(&mut p.vel, &mut p.omega, 10.0, 100.0);
             }
 
-            let total_ke: f32 = particles.iter()
+            let total_ke: f32 = particles
+                .iter()
                 .map(|p| kinetic_energy(p.vel, p.omega, mass, inertia))
                 .sum();
-            let max_vel = particles.iter().map(|p| p.vel.length()).fold(0.0f32, f32::max);
+            let max_vel = particles
+                .iter()
+                .map(|p| p.vel.length())
+                .fold(0.0f32, f32::max);
 
             if step % 1000 == 0 {
-                println!("t={:.1}s: KE={:.6}J, max_vel={:.4}m/s, offset={:.4}m",
-                    time, total_ke, max_vel, container.current_offset);
+                println!(
+                    "t={:.1}s: KE={:.6}J, max_vel={:.4}m/s, offset={:.4}m",
+                    time, total_ke, max_vel, container.current_offset
+                );
             }
         }
 
         // Record state at oscillation stop
-        let ke_at_stop: f32 = particles.iter()
+        let ke_at_stop: f32 = particles
+            .iter()
             .map(|p| kinetic_energy(p.vel, p.omega, mass, inertia))
             .sum();
-        let max_vel_at_stop = particles.iter().map(|p| p.vel.length()).fold(0.0f32, f32::max);
+        let max_vel_at_stop = particles
+            .iter()
+            .map(|p| p.vel.length())
+            .fold(0.0f32, f32::max);
 
         println!("\n=== Oscillation stopped ===");
         println!("KE at stop: {:.6} J", ke_at_stop);
@@ -1143,7 +1447,13 @@ mod tests {
 
             for (i, p) in particles.iter().enumerate() {
                 let wall_force = compute_wall_contact_force(
-                    p.pos, p.vel, p.omega, radius, mass, &container, &wall_props
+                    p.pos,
+                    p.vel,
+                    p.omega,
+                    radius,
+                    mass,
+                    &container,
+                    &wall_props,
                 );
                 forces[i] += wall_force.force;
                 torques[i] += wall_force.torque;
@@ -1157,9 +1467,19 @@ mod tests {
                     let contact_state = contact_states.entry(key).or_default();
 
                     let (force_i, force_j) = compute_particle_contact_force(
-                        pi.pos, pi.vel, pi.omega, radius, mass,
-                        pj.pos, pj.vel, pj.omega, radius, mass,
-                        &material, contact_state, dt
+                        pi.pos,
+                        pi.vel,
+                        pi.omega,
+                        radius,
+                        mass,
+                        pj.pos,
+                        pj.vel,
+                        pj.omega,
+                        radius,
+                        mass,
+                        &material,
+                        contact_state,
+                        dt,
                     );
 
                     forces[i] += force_i.force;
@@ -1172,8 +1492,15 @@ mod tests {
             // Integrate
             for (i, p) in particles.iter_mut().enumerate() {
                 integrate_first_half(
-                    &mut p.pos, &mut p.vel, &mut p.omega,
-                    forces[i], torques[i], mass, inertia, gravity, dt
+                    &mut p.pos,
+                    &mut p.vel,
+                    &mut p.omega,
+                    forces[i],
+                    torques[i],
+                    mass,
+                    inertia,
+                    gravity,
+                    dt,
                 );
                 clamp_to_container(&mut p.pos, &mut p.vel, radius, box_min, box_max);
                 clamp_velocity(&mut p.vel, &mut p.omega, 10.0, 100.0);
@@ -1184,7 +1511,13 @@ mod tests {
 
             for (i, p) in particles.iter().enumerate() {
                 let wall_force = compute_wall_contact_force(
-                    p.pos, p.vel, p.omega, radius, mass, &container, &wall_props
+                    p.pos,
+                    p.vel,
+                    p.omega,
+                    radius,
+                    mass,
+                    &container,
+                    &wall_props,
                 );
                 forces[i] += wall_force.force;
                 torques[i] += wall_force.torque;
@@ -1198,9 +1531,19 @@ mod tests {
                     let contact_state = contact_states.entry(key).or_default();
 
                     let (force_i, force_j) = compute_particle_contact_force(
-                        pi.pos, pi.vel, pi.omega, radius, mass,
-                        pj.pos, pj.vel, pj.omega, radius, mass,
-                        &material, contact_state, dt
+                        pi.pos,
+                        pi.vel,
+                        pi.omega,
+                        radius,
+                        mass,
+                        pj.pos,
+                        pj.vel,
+                        pj.omega,
+                        radius,
+                        mass,
+                        &material,
+                        contact_state,
+                        dt,
                     );
 
                     forces[i] += force_i.force;
@@ -1212,33 +1555,52 @@ mod tests {
 
             for (i, p) in particles.iter_mut().enumerate() {
                 integrate_second_half(
-                    &mut p.vel, &mut p.omega,
-                    forces[i], torques[i], mass, inertia, gravity, dt
+                    &mut p.vel,
+                    &mut p.omega,
+                    forces[i],
+                    torques[i],
+                    mass,
+                    inertia,
+                    gravity,
+                    dt,
                 );
                 clamp_velocity(&mut p.vel, &mut p.omega, 10.0, 100.0);
             }
 
-            let total_ke: f32 = particles.iter()
+            let total_ke: f32 = particles
+                .iter()
                 .map(|p| kinetic_energy(p.vel, p.omega, mass, inertia))
                 .sum();
-            let max_vel = particles.iter().map(|p| p.vel.length()).fold(0.0f32, f32::max);
+            let max_vel = particles
+                .iter()
+                .map(|p| p.vel.length())
+                .fold(0.0f32, f32::max);
 
             // Check if settled
             if settled_at_step.is_none() && max_vel < settling_threshold {
                 settled_at_step = Some(step);
-                println!("*** Particles settled at t={:.2}s (step {}) ***", time, step);
+                println!(
+                    "*** Particles settled at t={:.2}s (step {}) ***",
+                    time, step
+                );
             }
 
             if step % 2000 == 0 {
-                println!("t={:.1}s: KE={:.6}J, max_vel={:.4}m/s",
-                    time, total_ke, max_vel);
+                println!(
+                    "t={:.1}s: KE={:.6}J, max_vel={:.4}m/s",
+                    time, total_ke, max_vel
+                );
             }
         }
 
-        let final_ke: f32 = particles.iter()
+        let final_ke: f32 = particles
+            .iter()
             .map(|p| kinetic_energy(p.vel, p.omega, mass, inertia))
             .sum();
-        let final_max_vel = particles.iter().map(|p| p.vel.length()).fold(0.0f32, f32::max);
+        let final_max_vel = particles
+            .iter()
+            .map(|p| p.vel.length())
+            .fold(0.0f32, f32::max);
 
         println!("\n=== Final Results ===");
         println!("KE at oscillation stop: {:.6} J", ke_at_stop);
@@ -1247,16 +1609,27 @@ mod tests {
 
         if let Some(step) = settled_at_step {
             let settling_time = step as f32 * dt;
-            println!("Settling time: {:.2} seconds ({} steps)", settling_time, step);
+            println!(
+                "Settling time: {:.2} seconds ({} steps)",
+                settling_time, step
+            );
         } else {
             println!("WARNING: Particles did not settle within 10 seconds!");
-            println!("  Final max velocity: {:.4} m/s (threshold: {} m/s)", final_max_vel, settling_threshold);
+            println!(
+                "  Final max velocity: {:.4} m/s (threshold: {} m/s)",
+                final_max_vel, settling_threshold
+            );
         }
 
         // Report on particle final positions
         println!("\nFinal particle states:");
         for (i, p) in particles.iter().enumerate() {
-            println!("  Particle {}: pos={:?}, vel={:.6}m/s", i, p.pos, p.vel.length());
+            println!(
+                "  Particle {}: pos={:?}, vel={:.6}m/s",
+                i,
+                p.pos,
+                p.vel.length()
+            );
         }
     }
 
@@ -1273,8 +1646,10 @@ mod tests {
         let floor_y = container.base_position.y - container.half_extents.y;
         let half_thickness = container.divider_thickness / 2.0; // 0.005m
 
-        println!("Divider: thickness={}, half={}, height={}",
-            container.divider_thickness, half_thickness, container.divider_height);
+        println!(
+            "Divider: thickness={}, half={}, height={}",
+            container.divider_thickness, half_thickness, container.divider_height
+        );
         println!("Particle radius: {}", radius);
 
         // Test 1: Particle approaching divider from right side
@@ -1283,21 +1658,33 @@ mod tests {
             let pos = Vec3::new(*x, floor_y + 0.05, 0.0); // Below divider top
             let vel = Vec3::new(-0.5, 0.0, 0.0); // Moving left toward divider
 
-            let result = compute_wall_contact_force(pos, vel, omega, radius, mass, &container, &wall_props);
+            let result =
+                compute_wall_contact_force(pos, vel, omega, radius, mass, &container, &wall_props);
 
-            println!("  x={:+.4}: force.x={:+.2}N (overlap={:.4}m)",
-                x, result.force.x,
-                if *x > 0.0 { half_thickness - (*x - radius) } else { 0.0 }
+            println!(
+                "  x={:+.4}: force.x={:+.2}N (overlap={:.4}m)",
+                x,
+                result.force.x,
+                if *x > 0.0 {
+                    half_thickness - (*x - radius)
+                } else {
+                    0.0
+                }
             );
         }
 
         // Test 2: Particle at various x positions with zero velocity
         println!("\n=== Test 2: Stationary particles near divider ===");
-        for x in [0.03, 0.025, 0.024, 0.015, 0.005, 0.0, -0.005, -0.015, -0.024, -0.025, -0.03].iter() {
+        for x in [
+            0.03, 0.025, 0.024, 0.015, 0.005, 0.0, -0.005, -0.015, -0.024, -0.025, -0.03,
+        ]
+        .iter()
+        {
             let pos = Vec3::new(*x, floor_y + 0.05, 0.0);
             let vel = Vec3::ZERO;
 
-            let result = compute_wall_contact_force(pos, vel, omega, radius, mass, &container, &wall_props);
+            let result =
+                compute_wall_contact_force(pos, vel, omega, radius, mass, &container, &wall_props);
 
             if result.force.x.abs() > 0.1 {
                 println!("  x={:+.4}: force.x={:+.2}N", x, result.force.x);
@@ -1310,7 +1697,8 @@ mod tests {
             let pos = Vec3::new(*x, floor_y + 0.05, 0.0);
             let vel = Vec3::new(-0.5, 0.0, 0.0); // Moving left
 
-            let result = compute_wall_contact_force(pos, vel, omega, radius, mass, &container, &wall_props);
+            let result =
+                compute_wall_contact_force(pos, vel, omega, radius, mass, &container, &wall_props);
 
             println!("  x={:+.6}: force.x={:+.2}N", x, result.force.x);
         }
@@ -1339,25 +1727,49 @@ mod tests {
             let initial_ke = 0.5 * mass * vel.length_squared();
             println!("Initial KE: {:.6} J, vel: {:?}", initial_ke, vel);
 
-            for step in 0..2000 { // 1 second with actual timestep
+            for step in 0..2000 {
+                // 1 second with actual timestep
                 let wall_force1 = compute_wall_contact_force(
-                    pos, vel, omega, radius, mass, &container, &wall_props
+                    pos,
+                    vel,
+                    omega,
+                    radius,
+                    mass,
+                    &container,
+                    &wall_props,
                 );
                 integrate_first_half(
-                    &mut pos, &mut vel, &mut omega,
-                    wall_force1.force, wall_force1.torque,
-                    mass, inertia, gravity, dt
+                    &mut pos,
+                    &mut vel,
+                    &mut omega,
+                    wall_force1.force,
+                    wall_force1.torque,
+                    mass,
+                    inertia,
+                    gravity,
+                    dt,
                 );
                 clamp_to_container(&mut pos, &mut vel, radius, box_min, box_max);
                 clamp_velocity(&mut vel, &mut omega, 10.0, 100.0);
 
                 let wall_force2 = compute_wall_contact_force(
-                    pos, vel, omega, radius, mass, &container, &wall_props
+                    pos,
+                    vel,
+                    omega,
+                    radius,
+                    mass,
+                    &container,
+                    &wall_props,
                 );
                 integrate_second_half(
-                    &mut vel, &mut omega,
-                    wall_force2.force, wall_force2.torque,
-                    mass, inertia, gravity, dt
+                    &mut vel,
+                    &mut omega,
+                    wall_force2.force,
+                    wall_force2.torque,
+                    mass,
+                    inertia,
+                    gravity,
+                    dt,
                 );
                 clamp_velocity(&mut vel, &mut omega, 10.0, 100.0);
 
@@ -1365,15 +1777,21 @@ mod tests {
 
                 // Print every 100 steps and during collision
                 if step < 50 || step % 200 == 0 {
-                    println!("  step {}: x={:.4}, vel.x={:.4}, KE={:.6}J, f1={:.1}N, f2={:.1}N",
-                        step, pos.x, vel.x, ke, wall_force1.force.x, wall_force2.force.x);
+                    println!(
+                        "  step {}: x={:.4}, vel.x={:.4}, KE={:.6}J, f1={:.1}N, f2={:.1}N",
+                        step, pos.x, vel.x, ke, wall_force1.force.x, wall_force2.force.x
+                    );
                 }
             }
 
             let final_ke = 0.5 * mass * vel.length_squared();
             println!("\nFinal: pos={:?}, vel={:?}", pos, vel);
-            println!("KE change: {:.6} -> {:.6} J ({:+.2}%)",
-                initial_ke, final_ke, (final_ke / initial_ke - 1.0) * 100.0);
+            println!(
+                "KE change: {:.6} -> {:.6} J ({:+.2}%)",
+                initial_ke,
+                final_ke,
+                (final_ke / initial_ke - 1.0) * 100.0
+            );
         }
     }
 
@@ -1398,13 +1816,17 @@ mod tests {
 
         let r_eff = radius / 2.0; // Same size particles
         let m_eff = mass / 2.0;
-        let e_eff = material.youngs_modulus / (2.0 * (1.0 - material.poisson_ratio * material.poisson_ratio));
+        let e_eff = material.youngs_modulus
+            / (2.0 * (1.0 - material.poisson_ratio * material.poisson_ratio));
         let k_n = (4.0 / 3.0) * e_eff * (r_eff * overlap).sqrt();
 
         let ln_e = material.restitution.max(0.01).ln();
         let gamma_n = -2.0 * ln_e * (k_n * m_eff).sqrt() / (PI * PI + ln_e * ln_e).sqrt();
 
-        println!("\nCalculated parameters for {:.0}mm overlap:", overlap * 1000.0);
+        println!(
+            "\nCalculated parameters for {:.0}mm overlap:",
+            overlap * 1000.0
+        );
         println!("  Effective radius: {:.4} m", r_eff);
         println!("  Effective mass: {:.6} kg", m_eff);
         println!("  Normal stiffness k_n: {:.2} N/m", k_n);
@@ -1415,7 +1837,10 @@ mod tests {
         let critical_damping = 2.0 * (k_n * m_eff).sqrt();
         let damping_ratio = gamma_n / critical_damping;
         println!("  Critical damping: {:.4} kg/s", critical_damping);
-        println!("  Damping ratio: {:.4} (1.0 = critically damped)", damping_ratio);
+        println!(
+            "  Damping ratio: {:.4} (1.0 = critically damped)",
+            damping_ratio
+        );
 
         // For comparison, wall properties
         let wall_props = WallProperties::default();
@@ -1444,17 +1869,25 @@ mod tests {
         println!("Floor friction test:");
         println!("  floor_y = {}", floor_y);
         println!("  pos.y = {}, radius = {}", pos.y, radius);
-        println!("  floor_overlap = floor_y + radius - pos.y = {}", floor_y + radius - pos.y);
+        println!(
+            "  floor_overlap = floor_y + radius - pos.y = {}",
+            floor_y + radius - pos.y
+        );
         println!("  vel = {:?}", vel);
 
-        let result = compute_wall_contact_force(pos, vel, omega, radius, mass, &container, &wall_props);
+        let result =
+            compute_wall_contact_force(pos, vel, omega, radius, mass, &container, &wall_props);
 
         println!("  Result force: {:?}", result.force);
         println!("  Result torque: {:?}", result.torque);
         println!("  Force.x (friction): {}", result.force.x);
-        
+
         // Friction should be negative (opposing motion in +X direction)
-        assert!(result.force.x < -0.01, "Floor friction should slow horizontal motion, got force.x = {}", result.force.x);
+        assert!(
+            result.force.x < -0.01,
+            "Floor friction should slow horizontal motion, got force.x = {}",
+            result.force.x
+        );
     }
 
     // ========================================
@@ -1476,12 +1909,15 @@ mod tests {
         let inertia = (2.0 / 5.0) * mass * radius.powi(2);
 
         println!("=== Head-on Collision Test ===");
-        println!("Material: restitution={}, friction={}", material.restitution, material.friction);
+        println!(
+            "Material: restitution={}, friction={}",
+            material.restitution, material.friction
+        );
         println!("Particle: radius={}, mass={:.6}kg", radius, mass);
 
         // Two particles approaching each other
         let mut pos1 = Vec3::new(-0.05, 0.5, 0.0);
-        let mut vel1 = Vec3::new(1.0, 0.0, 0.0);  // Moving right at 1 m/s
+        let mut vel1 = Vec3::new(1.0, 0.0, 0.0); // Moving right at 1 m/s
         let mut omega1 = Vec3::ZERO;
 
         let mut pos2 = Vec3::new(0.05, 0.5, 0.0);
@@ -1527,9 +1963,19 @@ mod tests {
 
             // Calculate forces
             let (force1, force2) = compute_particle_contact_force(
-                pos1, vel1, omega1, radius, mass,
-                pos2, vel2, omega2, radius, mass,
-                &material, &mut contact_state, dt
+                pos1,
+                vel1,
+                omega1,
+                radius,
+                mass,
+                pos2,
+                vel2,
+                omega2,
+                radius,
+                mass,
+                &material,
+                &mut contact_state,
+                dt,
             );
 
             // Simple integration (no gravity for this test)
@@ -1545,13 +1991,18 @@ mod tests {
             let ke = 0.5 * mass * (vel1.length_squared() + vel2.length_squared());
             if ke > max_ke {
                 max_ke = ke;
-                println!("  WARNING: KE increased at step {}: {:.6} J (was {:.6} J)", step, ke, initial_ke);
+                println!(
+                    "  WARNING: KE increased at step {}: {:.6} J (was {:.6} J)",
+                    step, ke, initial_ke
+                );
             }
 
             // Print during contact
             if in_contact && step % 10 == 0 {
-                println!("  step {}: KE={:.6}J, vel1.x={:.4}, vel2.x={:.4}, overlap={:.6}m",
-                    step, ke, vel1.x, vel2.x, overlap);
+                println!(
+                    "  step {}: KE={:.6}J, vel1.x={:.4}, vel2.x={:.4}, overlap={:.6}m",
+                    step, ke, vel1.x, vel2.x, overlap
+                );
             }
 
             if contact_ended {
@@ -1566,7 +2017,10 @@ mod tests {
         println!("  pos1={:?}, vel1={:?}", pos1, vel1);
         println!("  pos2={:?}, vel2={:?}", pos2, vel2);
         println!("  Total KE: {:.6} J (was {:.6} J)", final_ke, initial_ke);
-        println!("  Total momentum: {:?} (was {:?})", final_momentum, initial_momentum);
+        println!(
+            "  Total momentum: {:?} (was {:?})",
+            final_momentum, initial_momentum
+        );
         println!("  Max KE during collision: {:.6} J", max_ke);
 
         // Check momentum conservation
@@ -1581,12 +2035,17 @@ mod tests {
         // Check energy: should decrease but not increase
         let energy_ratio = final_ke / initial_ke;
         let expected_ratio = material.restitution * material.restitution; // e² for head-on collision
-        println!("  Energy ratio: {:.4} (expected ~{:.4} for e={})", energy_ratio, expected_ratio, material.restitution);
+        println!(
+            "  Energy ratio: {:.4} (expected ~{:.4} for e={})",
+            energy_ratio, expected_ratio, material.restitution
+        );
 
         assert!(
             max_ke <= initial_ke * 1.01,
             "Energy should not increase! Max KE {:.6} > initial {:.6} (+{:.2}%)",
-            max_ke, initial_ke, (max_ke / initial_ke - 1.0) * 100.0
+            max_ke,
+            initial_ke,
+            (max_ke / initial_ke - 1.0) * 100.0
         );
 
         // For restitution e, energy after = e² * energy before (for equal mass head-on)
@@ -1596,7 +2055,9 @@ mod tests {
         assert!(
             energy_ratio >= min_expected && energy_ratio <= max_expected.max(0.9),
             "Energy ratio {:.4} outside expected range [{:.4}, {:.4}]",
-            energy_ratio, min_expected, max_expected
+            energy_ratio,
+            min_expected,
+            max_expected
         );
     }
 
@@ -1638,9 +2099,19 @@ mod tests {
 
         for step in 0..3000 {
             let (force1, force2) = compute_particle_contact_force(
-                pos1, vel1, omega1, radius, mass,
-                pos2, vel2, omega2, radius, mass,
-                &material, &mut contact_state, dt
+                pos1,
+                vel1,
+                omega1,
+                radius,
+                mass,
+                pos2,
+                vel2,
+                omega2,
+                radius,
+                mass,
+                &material,
+                &mut contact_state,
+                dt,
             );
 
             vel1 += force1.force / mass * dt;
@@ -1655,8 +2126,13 @@ mod tests {
             if ke > max_ke * 1.001 {
                 max_ke = ke;
                 let dist = (pos1 - pos2).length();
-                println!("  WARNING: KE spike at step {}: {:.6} J (+{:.2}%), dist={:.6}m",
-                    step, ke, (ke / initial_ke - 1.0) * 100.0, dist);
+                println!(
+                    "  WARNING: KE spike at step {}: {:.6} J (+{:.2}%), dist={:.6}m",
+                    step,
+                    ke,
+                    (ke / initial_ke - 1.0) * 100.0,
+                    dist
+                );
             }
         }
 
@@ -1680,7 +2156,9 @@ mod tests {
         assert!(
             max_ke <= initial_ke * 1.05,
             "Energy should not increase significantly! Max KE {:.6} > initial {:.6} (+{:.2}%)",
-            max_ke, initial_ke, (max_ke / initial_ke - 1.0) * 100.0
+            max_ke,
+            initial_ke,
+            (max_ke / initial_ke - 1.0) * 100.0
         );
     }
 
@@ -1708,26 +2186,52 @@ mod tests {
 
         // 6 particles in a box (spaced at least 2*radius apart to avoid initial overlap)
         let mut particles = vec![
-            Particle { pos: Vec3::new(-0.06, 0.5, 0.0), vel: Vec3::new(0.3, 0.1, 0.0), omega: Vec3::ZERO },
-            Particle { pos: Vec3::new(0.06, 0.5, 0.0), vel: Vec3::new(-0.3, -0.1, 0.0), omega: Vec3::ZERO },
-            Particle { pos: Vec3::new(0.0, 0.55, 0.05), vel: Vec3::new(0.1, -0.2, -0.1), omega: Vec3::ZERO },
-            Particle { pos: Vec3::new(0.0, 0.55, -0.05), vel: Vec3::new(-0.1, -0.2, 0.1), omega: Vec3::ZERO },
-            Particle { pos: Vec3::new(-0.05, 0.60, 0.0), vel: Vec3::new(0.2, 0.05, -0.05), omega: Vec3::ZERO },
-            Particle { pos: Vec3::new(0.05, 0.60, 0.0), vel: Vec3::new(-0.2, 0.1, 0.1), omega: Vec3::ZERO },
+            Particle {
+                pos: Vec3::new(-0.06, 0.5, 0.0),
+                vel: Vec3::new(0.3, 0.1, 0.0),
+                omega: Vec3::ZERO,
+            },
+            Particle {
+                pos: Vec3::new(0.06, 0.5, 0.0),
+                vel: Vec3::new(-0.3, -0.1, 0.0),
+                omega: Vec3::ZERO,
+            },
+            Particle {
+                pos: Vec3::new(0.0, 0.55, 0.05),
+                vel: Vec3::new(0.1, -0.2, -0.1),
+                omega: Vec3::ZERO,
+            },
+            Particle {
+                pos: Vec3::new(0.0, 0.55, -0.05),
+                vel: Vec3::new(-0.1, -0.2, 0.1),
+                omega: Vec3::ZERO,
+            },
+            Particle {
+                pos: Vec3::new(-0.05, 0.60, 0.0),
+                vel: Vec3::new(0.2, 0.05, -0.05),
+                omega: Vec3::ZERO,
+            },
+            Particle {
+                pos: Vec3::new(0.05, 0.60, 0.0),
+                vel: Vec3::new(-0.2, 0.1, 0.1),
+                omega: Vec3::ZERO,
+            },
         ];
 
         let mut contact_states: std::collections::HashMap<(usize, usize), ContactState> =
             std::collections::HashMap::new();
 
         let calc_total_ke = |particles: &[Particle]| -> f32 {
-            particles.iter()
-                .map(|p| 0.5 * mass * p.vel.length_squared() + 0.5 * inertia * p.omega.length_squared())
+            particles
+                .iter()
+                .map(|p| {
+                    0.5 * mass * p.vel.length_squared() + 0.5 * inertia * p.omega.length_squared()
+                })
                 .sum()
         };
 
-        let calc_total_momentum = |particles: &[Particle]| -> Vec3 {
-            particles.iter().map(|p| mass * p.vel).sum()
-        };
+        let calc_total_momentum =
+            |particles: &[Particle]| -> Vec3 { particles.iter().map(|p| mass * p.vel).sum() };
 
         let initial_ke = calc_total_ke(&particles);
         let initial_momentum = calc_total_momentum(&particles);
@@ -1752,9 +2256,19 @@ mod tests {
                     let contact_state = contact_states.entry(key).or_default();
 
                     let (force_i, force_j) = compute_particle_contact_force(
-                        pi.pos, pi.vel, pi.omega, radius, mass,
-                        pj.pos, pj.vel, pj.omega, radius, mass,
-                        &material, contact_state, dt
+                        pi.pos,
+                        pi.vel,
+                        pi.omega,
+                        radius,
+                        mass,
+                        pj.pos,
+                        pj.vel,
+                        pj.omega,
+                        radius,
+                        mass,
+                        &material,
+                        contact_state,
+                        dt,
                     );
 
                     forces[i] += force_i.force;
@@ -1785,9 +2299,19 @@ mod tests {
                     let contact_state = contact_states.entry(key).or_default();
 
                     let (force_i, force_j) = compute_particle_contact_force(
-                        pi.pos, pi.vel, pi.omega, radius, mass,
-                        pj.pos, pj.vel, pj.omega, radius, mass,
-                        &material, contact_state, dt
+                        pi.pos,
+                        pi.vel,
+                        pi.omega,
+                        radius,
+                        mass,
+                        pj.pos,
+                        pj.vel,
+                        pj.omega,
+                        radius,
+                        mass,
+                        &material,
+                        contact_state,
+                        dt,
                     );
 
                     forces[i] += force_i.force;
@@ -1810,8 +2334,13 @@ mod tests {
                 if ke > initial_ke * 1.01 {
                     energy_spikes += 1;
                     if energy_spikes <= 5 {
-                        println!("  Energy spike #{} at step {}: {:.6} J (+{:.2}%)",
-                            energy_spikes, step, ke, (ke / initial_ke - 1.0) * 100.0);
+                        println!(
+                            "  Energy spike #{} at step {}: {:.6} J (+{:.2}%)",
+                            energy_spikes,
+                            step,
+                            ke,
+                            (ke / initial_ke - 1.0) * 100.0
+                        );
                     }
                 }
                 max_ke = ke;
@@ -1819,8 +2348,12 @@ mod tests {
 
             if step % 1000 == 0 {
                 let momentum = calc_total_momentum(&particles);
-                println!("step {}: KE={:.6}J, momentum_mag={:.6}",
-                    step, ke, momentum.length());
+                println!(
+                    "step {}: KE={:.6}J, momentum_mag={:.6}",
+                    step,
+                    ke,
+                    momentum.length()
+                );
             }
         }
 
@@ -1829,7 +2362,11 @@ mod tests {
 
         println!("\nFinal state:");
         println!("  Final KE: {:.6} J (was {:.6} J)", final_ke, initial_ke);
-        println!("  Max KE: {:.6} J (+{:.2}% from initial)", max_ke, (max_ke / initial_ke - 1.0) * 100.0);
+        println!(
+            "  Max KE: {:.6} J (+{:.2}% from initial)",
+            max_ke,
+            (max_ke / initial_ke - 1.0) * 100.0
+        );
         println!("  Energy spikes (>1%): {}", energy_spikes);
         println!("  Final momentum: {:?}", final_momentum);
 
@@ -1845,7 +2382,9 @@ mod tests {
         assert!(
             max_ke <= initial_ke * 1.10,
             "Energy increased too much! Max KE {:.6} > initial {:.6} (+{:.2}%)",
-            max_ke, initial_ke, (max_ke / initial_ke - 1.0) * 100.0
+            max_ke,
+            initial_ke,
+            (max_ke / initial_ke - 1.0) * 100.0
         );
     }
 
@@ -1873,17 +2412,32 @@ mod tests {
 
         // 3 particles converging
         let mut particles = vec![
-            Particle { pos: Vec3::new(-0.06, 0.5, 0.0), vel: Vec3::new(0.5, 0.0, 0.0), omega: Vec3::ZERO },
-            Particle { pos: Vec3::new(0.06, 0.5, 0.0), vel: Vec3::new(-0.5, 0.0, 0.0), omega: Vec3::ZERO },
-            Particle { pos: Vec3::new(0.0, 0.57, 0.0), vel: Vec3::new(0.0, -0.5, 0.0), omega: Vec3::ZERO },
+            Particle {
+                pos: Vec3::new(-0.06, 0.5, 0.0),
+                vel: Vec3::new(0.5, 0.0, 0.0),
+                omega: Vec3::ZERO,
+            },
+            Particle {
+                pos: Vec3::new(0.06, 0.5, 0.0),
+                vel: Vec3::new(-0.5, 0.0, 0.0),
+                omega: Vec3::ZERO,
+            },
+            Particle {
+                pos: Vec3::new(0.0, 0.57, 0.0),
+                vel: Vec3::new(0.0, -0.5, 0.0),
+                omega: Vec3::ZERO,
+            },
         ];
 
         let mut contact_states: std::collections::HashMap<(usize, usize), ContactState> =
             std::collections::HashMap::new();
 
         let calc_ke = |particles: &[Particle]| -> f32 {
-            particles.iter()
-                .map(|p| 0.5 * mass * p.vel.length_squared() + 0.5 * inertia * p.omega.length_squared())
+            particles
+                .iter()
+                .map(|p| {
+                    0.5 * mass * p.vel.length_squared() + 0.5 * inertia * p.omega.length_squared()
+                })
                 .sum()
         };
 
@@ -1905,9 +2459,19 @@ mod tests {
                     let contact_state = contact_states.entry(key).or_default();
 
                     let (force_i, force_j) = compute_particle_contact_force(
-                        pi.pos, pi.vel, pi.omega, radius, mass,
-                        pj.pos, pj.vel, pj.omega, radius, mass,
-                        &material, contact_state, dt
+                        pi.pos,
+                        pi.vel,
+                        pi.omega,
+                        radius,
+                        mass,
+                        pj.pos,
+                        pj.vel,
+                        pj.omega,
+                        radius,
+                        mass,
+                        &material,
+                        contact_state,
+                        dt,
                     );
 
                     forces[i] += force_i.force;
@@ -1927,7 +2491,12 @@ mod tests {
             let ke = calc_ke(&particles);
             if ke > max_ke * 1.005 {
                 max_ke = ke;
-                println!("  step {}: KE={:.6}J (+{:.2}%)", step, ke, (ke / initial_ke - 1.0) * 100.0);
+                println!(
+                    "  step {}: KE={:.6}J (+{:.2}%)",
+                    step,
+                    ke,
+                    (ke / initial_ke - 1.0) * 100.0
+                );
             }
 
             if step % 500 == 0 {
@@ -1938,12 +2507,18 @@ mod tests {
         let final_ke = calc_ke(&particles);
         println!("\nFinal KE: {:.6} J (was {:.6} J)", final_ke, initial_ke);
         println!("Energy ratio: {:.4}", final_ke / initial_ke);
-        println!("Max KE: {:.6} J (+{:.2}%)", max_ke, (max_ke / initial_ke - 1.0) * 100.0);
+        println!(
+            "Max KE: {:.6} J (+{:.2}%)",
+            max_ke,
+            (max_ke / initial_ke - 1.0) * 100.0
+        );
 
         assert!(
             max_ke <= initial_ke * 1.05,
             "Energy should not increase! Max KE {:.6} > initial {:.6} (+{:.2}%)",
-            max_ke, initial_ke, (max_ke / initial_ke - 1.0) * 100.0
+            max_ke,
+            initial_ke,
+            (max_ke / initial_ke - 1.0) * 100.0
         );
     }
 
@@ -1963,10 +2538,13 @@ mod tests {
 
         println!("=== Step-by-Step Collision Debug ===");
         println!("dt={}, radius={}, mass={:.6}", dt, radius, mass);
-        println!("Material: E={}, restitution={}", material.youngs_modulus, material.restitution);
+        println!(
+            "Material: E={}, restitution={}",
+            material.youngs_modulus, material.restitution
+        );
 
         // Two particles about to collide (start with NO overlap)
-        let mut pos1 = Vec3::new(-0.025, 0.5, 0.0);  // 5mm gap
+        let mut pos1 = Vec3::new(-0.025, 0.5, 0.0); // 5mm gap
         let mut vel1 = Vec3::new(0.5, 0.0, 0.0);
         let mut omega1 = Vec3::ZERO;
 
@@ -1986,9 +2564,19 @@ mod tests {
 
             // Calculate forces
             let (force1, force2) = compute_particle_contact_force(
-                pos1, vel1, omega1, radius, mass,
-                pos2, vel2, omega2, radius, mass,
-                &material, &mut contact_state, dt
+                pos1,
+                vel1,
+                omega1,
+                radius,
+                mass,
+                pos2,
+                vel2,
+                omega2,
+                radius,
+                mass,
+                &material,
+                &mut contact_state,
+                dt,
             );
 
             let ke_before = 0.5 * mass * (vel1.length_squared() + vel2.length_squared());
@@ -2009,9 +2597,12 @@ mod tests {
                 println!("  force1={:?}, force2={:?}", force1.force, force2.force);
                 println!("  dv1={:?}, dv2={:?}", dv1, dv2);
                 println!("  vel1={:?}, vel2={:?}", vel1, vel2);
-                println!("  KE: {:.6} -> {:.6} (delta={:+.6})", ke_before, ke_after, ke_change);
+                println!(
+                    "  KE: {:.6} -> {:.6} (delta={:+.6})",
+                    ke_before, ke_after, ke_change
+                );
                 if contact_state.active {
-                    println!("  tangent_disp={:?}", contact_state.tangential_displacement);
+                    println!("  last_normal={:?}", contact_state.last_normal);
                 }
             }
 
@@ -2021,7 +2612,10 @@ mod tests {
         }
 
         let final_ke = 0.5 * mass * (vel1.length_squared() + vel2.length_squared());
-        println!("\nFinal KE: {:.6} J (initial was {:.6})", final_ke, initial_ke);
+        println!(
+            "\nFinal KE: {:.6} J (initial was {:.6})",
+            final_ke, initial_ke
+        );
         println!("Ratio: {:.4}", final_ke / initial_ke);
     }
 
@@ -2052,9 +2646,19 @@ mod tests {
         let mut contact_state = ContactState::default();
 
         let (force1, force2) = compute_particle_contact_force(
-            pos1, vel1, omega1, radius, mass,
-            pos2, vel2, omega2, radius, mass,
-            &material, &mut contact_state, dt
+            pos1,
+            vel1,
+            omega1,
+            radius,
+            mass,
+            pos2,
+            vel2,
+            omega2,
+            radius,
+            mass,
+            &material,
+            &mut contact_state,
+            dt,
         );
 
         println!("Force on particle 1: {:?}", force1.force);

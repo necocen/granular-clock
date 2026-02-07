@@ -3,15 +3,8 @@ use std::collections::HashMap;
 use std::f32::consts::PI;
 
 /// 接触履歴
-/// 注: 現在は正規化Coulomb摩擦モデルを使用しており、
-/// tangential_displacement と rolling_displacement は未使用
 #[derive(Default, Clone)]
-#[allow(dead_code)]
 pub struct ContactState {
-    /// 接線方向の累積変位（現在未使用）
-    pub tangential_displacement: Vec3,
-    /// 転がり方向の累積変位（現在未使用）
-    pub rolling_displacement: Vec3,
     /// 最後の法線方向
     pub last_normal: Vec3,
     /// 接触が有効かどうか

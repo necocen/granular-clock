@@ -5,16 +5,7 @@
 // - [0, num_large) = 大粒子
 // - [num_large, num_particles) = 小粒子
 
-struct Particle {
-    pos: vec3<f32>,
-    radius: f32,
-    vel: vec3<f32>,
-    mass_inv: f32,
-    omega: vec3<f32>,
-    inertia_inv: f32,
-    size_flag: u32,
-    _pad: array<u32, 3>,
-}
+#import granular_clock::physics_types::Particle
 
 struct InstanceData {
     pos_scale: vec4<f32>,  // xyz = world position, w = radius (uniform scale)

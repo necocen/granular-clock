@@ -3,12 +3,10 @@ use bevy::prelude::*;
 use crate::physics::{ParticleSize, Position, Velocity};
 
 /// デバッグ用：粒子の状態を出力
-pub fn debug_particles(
-    particles: Query<(&Position, &Velocity, &ParticleSize)>,
-    time: Res<Time>,
-) {
+#[allow(dead_code)]
+pub fn debug_particles(particles: Query<(&Position, &Velocity, &ParticleSize)>, time: Res<Time>) {
     // 1秒ごとに出力
-    if time.elapsed_secs() as u32 % 2 == 0 {
+    if (time.elapsed_secs() as u32).is_multiple_of(2) {
         let mut large_count = 0;
         let mut small_count = 0;
         let mut min_y = f32::MAX;

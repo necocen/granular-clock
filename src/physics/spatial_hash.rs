@@ -60,23 +60,23 @@ impl SpatialHashGrid {
         let iz = (pos.z / self.cell_size).floor() as i32;
 
         // 大きな素数を使ったハッシュ関数
-        let h = (ix.wrapping_mul(73856093))
-            ^ (iy.wrapping_mul(19349663))
-            ^ (iz.wrapping_mul(83492791));
+        let h =
+            (ix.wrapping_mul(73856093)) ^ (iy.wrapping_mul(19349663)) ^ (iz.wrapping_mul(83492791));
 
         (h as usize) & (self.table_size - 1)
     }
 
     /// セルインデックスからハッシュ値を計算
+    #[allow(dead_code)]
     pub fn hash_cell(&self, ix: i32, iy: i32, iz: i32) -> usize {
-        let h = (ix.wrapping_mul(73856093))
-            ^ (iy.wrapping_mul(19349663))
-            ^ (iz.wrapping_mul(83492791));
+        let h =
+            (ix.wrapping_mul(73856093)) ^ (iy.wrapping_mul(19349663)) ^ (iz.wrapping_mul(83492791));
 
         (h as usize) & (self.table_size - 1)
     }
 
     /// 位置からセルインデックスを取得
+    #[allow(dead_code)]
     pub fn cell_index(&self, pos: Vec3) -> (i32, i32, i32) {
         let ix = (pos.x / self.cell_size).floor() as i32;
         let iy = (pos.y / self.cell_size).floor() as i32;
@@ -97,7 +97,7 @@ impl SpatialHashGrid {
         self.buckets[hash].lock().push(entity);
     }
 
-    /// 近傍セルのオフセット（27セル：自身 + 隣接26セル）
+    #[allow(dead_code)]
     pub fn neighbor_offsets() -> &'static [(i32, i32, i32); 27] {
         static OFFSETS: [(i32, i32, i32); 27] = [
             (-1, -1, -1),
@@ -130,24 +130,12 @@ impl SpatialHashGrid {
         ];
         &OFFSETS
     }
+}
 
-    /// 重複なしで衝突ペアを生成するためのオフセット（13セル：正方向のみ）
-    pub fn positive_neighbor_offsets() -> &'static [(i32, i32, i32); 13] {
-        static OFFSETS: [(i32, i32, i32); 13] = [
-            (0, 0, 1),
-            (0, 1, -1),
-            (0, 1, 0),
-            (0, 1, 1),
-            (1, -1, -1),
-            (1, -1, 0),
-            (1, -1, 1),
-            (1, 0, -1),
-            (1, 0, 0),
-            (1, 0, 1),
-            (1, 1, -1),
-            (1, 1, 0),
-            (1, 1, 1),
-        ];
-        &OFFSETS
-    }
+/// GridSettings から SpatialHashGrid を初期化するシステム
+pub fn init_spatial_hash_grid(mut commands: Commands, grid_settings: Res<GridSettings>) {
+    commands.insert_resource(SpatialHashGrid::new(
+        grid_settings.cell_size,
+        grid_settings.table_size,
+    ));
 }

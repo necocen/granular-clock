@@ -22,6 +22,7 @@ pub struct SmallCountText;
 pub struct GraphContainer;
 
 #[derive(Component)]
+#[allow(dead_code)]
 pub struct GraphLine {
     pub is_large: bool,
 }
@@ -317,8 +318,8 @@ pub fn update_graph_lines(
     }
 
     // Determine visible range (last MAX_POINTS points)
-    let start_idx = if len > MAX_POINTS { len - MAX_POINTS } else { 0 };
-    let visible_len = len - start_idx;
+    let start_idx = len.saturating_sub(MAX_POINTS);
+    let _visible_len = len - start_idx;
 
     // Draw lines as small rectangles
     let point_width = GRAPH_WIDTH / MAX_POINTS as f32;

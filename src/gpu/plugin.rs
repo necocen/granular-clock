@@ -14,8 +14,7 @@ use crate::physics::{
     AngularVelocity, MaterialProperties, ParticleProperties, ParticleSize, PhysicsConstants,
     Position, Velocity,
 };
-use crate::simulation::{Container, PhysicsBackend, SimulationTime};
-use crate::ui::SimulationState;
+use crate::simulation::{Container, PhysicsBackend, SimulationState, SimulationTime};
 
 use super::{
     buffers::{GpuPhysicsBuffers, ParticleGpu, SimulationParams},
@@ -26,6 +25,7 @@ use super::{
 use crate::physics::GridSettings;
 
 /// GPU 物理が有効かどうかのフラグ
+#[allow(dead_code)]
 #[derive(Resource, Clone, Default)]
 pub struct GpuPhysicsEnabled(pub bool);
 
@@ -149,6 +149,7 @@ fn update_container_params(
 }
 
 /// Main World の粒子データを GpuParticleData に抽出（初回または粒子数変更時）
+#[allow(clippy::too_many_arguments)]
 fn extract_particle_data(
     added_particles: Query<(), Added<Position>>,
     all_particles: Query<(
@@ -171,8 +172,7 @@ fn extract_particle_data(
     // apply_gpu_results による Position の変更では Added はトリガーされない
     let has_new_particles = !added_particles.is_empty();
     // CPU→GPU 切り替え時は現在の ECS 状態を GPU バッファに反映する
-    let backend_switched_to_gpu =
-        backend.is_changed() && *backend == PhysicsBackend::Gpu;
+    let backend_switched_to_gpu = backend.is_changed() && *backend == PhysicsBackend::Gpu;
     if gpu_data.initialized && !has_new_particles && !backend_switched_to_gpu {
         return;
     }
@@ -294,9 +294,7 @@ fn prepare_gpu_buffers(
     // 世代が変わった場合（初回またはReset後）に粒子データを GPU に転送
     // 注: particles_out に書き込む。node.update() でスワップされた後、
     // particles_in として読み取られるため。
-    if !gpu_data.particles.is_empty()
-        && buffers.last_uploaded_generation != gpu_data.generation
-    {
+    if !gpu_data.particles.is_empty() && buffers.last_uploaded_generation != gpu_data.generation {
         let particle_bytes = bytemuck::cast_slice(&gpu_data.particles);
         render_queue.write_buffer(&buffers.particles_out, 0, particle_bytes);
         buffers.num_particles = num_particles;

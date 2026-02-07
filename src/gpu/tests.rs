@@ -465,7 +465,11 @@ mod tests {
         mass_inv: f32,
         dt: f32,
     ) {
-        let a = [force[0] * mass_inv, force[1] * mass_inv, force[2] * mass_inv];
+        let a = [
+            force[0] * mass_inv,
+            force[1] * mass_inv,
+            force[2] * mass_inv,
+        ];
         vel[0] += a[0] * dt;
         vel[1] += a[1] * dt;
         vel[2] += a[2] * dt;
@@ -493,12 +497,19 @@ mod tests {
             [5.0, 0.0, 0.0], // q は右に高速離反
             0.01,
             95.493,
-            params.0, params.1, params.2, params.3,
+            params.0,
+            params.1,
+            params.2,
+            params.3,
         );
 
         // 法線方向の力が非負（引力にならない）ことを検証
         // n = (pos_p - pos_q) / dist = [-1, 0, 0]
-        let delta = [pos_p[0] - pos_q[0], pos_p[1] - pos_q[1], pos_p[2] - pos_q[2]];
+        let delta = [
+            pos_p[0] - pos_q[0],
+            pos_p[1] - pos_q[1],
+            pos_p[2] - pos_q[2],
+        ];
         let dist = (delta[0] * delta[0] + delta[1] * delta[1] + delta[2] * delta[2]).sqrt();
         let n = [delta[0] / dist, delta[1] / dist, delta[2] / dist];
 
@@ -532,9 +543,8 @@ mod tests {
         // 5000ステップ実行（接近→衝突→離反の全サイクル）
         for _ in 0..5000 {
             let force_on_a = gpu_compute_contact_force(
-                pos_a, vel_a, radius, mass_inv,
-                pos_b, vel_b, radius, mass_inv,
-                params.0, params.1, params.2, params.3,
+                pos_a, vel_a, radius, mass_inv, pos_b, vel_b, radius, mass_inv, params.0, params.1,
+                params.2, params.3,
             );
             let force_on_b = [-force_on_a[0], -force_on_a[1], -force_on_a[2]];
 
@@ -560,7 +570,9 @@ mod tests {
         assert!(
             final_ke <= initial_ke * 1.01,
             "Final KE should not exceed initial: initial={:.6}, final={:.6}, ratio={:.4}",
-            initial_ke, final_ke, final_ke / initial_ke
+            initial_ke,
+            final_ke,
+            final_ke / initial_ke
         );
     }
 
@@ -583,9 +595,8 @@ mod tests {
 
         for _ in 0..5000 {
             let force_on_a = gpu_compute_contact_force(
-                pos_a, vel_a, radius, mass_inv,
-                pos_b, vel_b, radius, mass_inv,
-                params.0, params.1, params.2, params.3,
+                pos_a, vel_a, radius, mass_inv, pos_b, vel_b, radius, mass_inv, params.0, params.1,
+                params.2, params.3,
             );
             let force_on_b = [-force_on_a[0], -force_on_a[1], -force_on_a[2]];
 
@@ -603,13 +614,17 @@ mod tests {
         assert!(
             max_ke <= initial_ke * 1.01,
             "Oblique max KE should not exceed initial: initial={:.6}, max={:.6}, ratio={:.4}",
-            initial_ke, max_ke, max_ke / initial_ke
+            initial_ke,
+            max_ke,
+            max_ke / initial_ke
         );
 
         assert!(
             final_ke <= initial_ke * 1.01,
             "Oblique final KE should not exceed initial: initial={:.6}, final={:.6}, ratio={:.4}",
-            initial_ke, final_ke, final_ke / initial_ke
+            initial_ke,
+            final_ke,
+            final_ke / initial_ke
         );
     }
 
@@ -635,17 +650,25 @@ mod tests {
 
         for _ in 0..5000 {
             let force_on_a = gpu_compute_contact_force(
-                pos_a, vel_a, radius_large, mass_inv_large,
-                pos_b, vel_b, radius_small, mass_inv_small,
-                params.0, params.1, params.2, params.3,
+                pos_a,
+                vel_a,
+                radius_large,
+                mass_inv_large,
+                pos_b,
+                vel_b,
+                radius_small,
+                mass_inv_small,
+                params.0,
+                params.1,
+                params.2,
+                params.3,
             );
             let force_on_b = [-force_on_a[0], -force_on_a[1], -force_on_a[2]];
 
             gpu_integrate_step(&mut pos_a, &mut vel_a, force_on_a, mass_inv_large, dt);
             gpu_integrate_step(&mut pos_b, &mut vel_b, force_on_b, mass_inv_small, dt);
 
-            let ke =
-                kinetic_energy(vel_a, mass_inv_large) + kinetic_energy(vel_b, mass_inv_small);
+            let ke = kinetic_energy(vel_a, mass_inv_large) + kinetic_energy(vel_b, mass_inv_small);
             if ke > max_ke {
                 max_ke = ke;
             }
@@ -684,7 +707,10 @@ mod tests {
             [0.0, 0.0, 0.0],
             radius,
             mass_inv,
-            params.0, params.1, params.2, params.3,
+            params.0,
+            params.1,
+            params.2,
+            params.3,
         );
 
         // 浅い貫通
@@ -697,7 +723,10 @@ mod tests {
             [0.0, 0.0, 0.0],
             radius,
             mass_inv,
-            params.0, params.1, params.2, params.3,
+            params.0,
+            params.1,
+            params.2,
+            params.3,
         );
 
         // overlap clamp により、深い貫通の力は制限される
@@ -707,11 +736,11 @@ mod tests {
         let force_deep_mag = (force_deep[0] * force_deep[0]
             + force_deep[1] * force_deep[1]
             + force_deep[2] * force_deep[2])
-        .sqrt();
+            .sqrt();
         let force_shallow_mag = (force_shallow[0] * force_shallow[0]
             + force_shallow[1] * force_shallow[1]
             + force_shallow[2] * force_shallow[2])
-        .sqrt();
+            .sqrt();
 
         // 力の大きさが近いことを確認（clamp が効いている）
         assert!(
@@ -769,57 +798,102 @@ mod tests {
 
         // テストケース: (pos_p, vel_p, radius_p, mass_p, pos_q, vel_q, radius_q, mass_q, label)
         let cases: Vec<(
-            [f32; 3], [f32; 3], f32, f32,
-            [f32; 3], [f32; 3], f32, f32,
+            [f32; 3],
+            [f32; 3],
+            f32,
+            f32,
+            [f32; 3],
+            [f32; 3],
+            f32,
+            f32,
             &str,
         )> = vec![
             // Case 1: 同サイズ、静止、浅い接触
             (
-                [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], 0.01, 1.0 / 95.493,
-                [0.019, 0.0, 0.0], [0.0, 0.0, 0.0], 0.01, 1.0 / 95.493,
+                [0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                0.01,
+                1.0 / 95.493,
+                [0.019, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                0.01,
+                1.0 / 95.493,
                 "same-size stationary shallow contact",
             ),
             // Case 2: 同サイズ、接近中
             (
-                [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], 0.01, 1.0 / 95.493,
-                [0.019, 0.0, 0.0], [-1.0, 0.0, 0.0], 0.01, 1.0 / 95.493,
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                0.01,
+                1.0 / 95.493,
+                [0.019, 0.0, 0.0],
+                [-1.0, 0.0, 0.0],
+                0.01,
+                1.0 / 95.493,
                 "same-size approaching",
             ),
             // Case 3: 同サイズ、離反中
             (
-                [0.0, 0.0, 0.0], [-1.0, 0.0, 0.0], 0.01, 1.0 / 95.493,
-                [0.019, 0.0, 0.0], [1.0, 0.0, 0.0], 0.01, 1.0 / 95.493,
+                [0.0, 0.0, 0.0],
+                [-1.0, 0.0, 0.0],
+                0.01,
+                1.0 / 95.493,
+                [0.019, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                0.01,
+                1.0 / 95.493,
                 "same-size separating",
             ),
             // Case 4: 異サイズ、接近中
             (
-                [0.0, 0.0, 0.0], [0.5, 0.0, 0.0], 0.01, 1.0 / 95.493,
-                [0.013, 0.0, 0.0], [-0.3, 0.0, 0.0], 0.004, 1.0 / 1492.077,
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+                0.01,
+                1.0 / 95.493,
+                [0.013, 0.0, 0.0],
+                [-0.3, 0.0, 0.0],
+                0.004,
+                1.0 / 1492.077,
                 "different-size approaching",
             ),
             // Case 5: 斜め接触、接線速度あり
             (
-                [0.0, 0.0, 0.0], [1.0, 0.5, 0.0], 0.01, 1.0 / 95.493,
-                [0.019, 0.001, 0.0], [-1.0, -0.5, 0.0], 0.01, 1.0 / 95.493,
+                [0.0, 0.0, 0.0],
+                [1.0, 0.5, 0.0],
+                0.01,
+                1.0 / 95.493,
+                [0.019, 0.001, 0.0],
+                [-1.0, -0.5, 0.0],
+                0.01,
+                1.0 / 95.493,
                 "oblique with tangential velocity",
             ),
         ];
 
         for (pos_p, vel_p, radius_p, mass_p, pos_q, vel_q, radius_q, mass_q, label) in &cases {
             let cpu_force = cpu_compute_contact_force(
-                *pos_p, *vel_p, *radius_p, *mass_p,
-                *pos_q, *vel_q, *radius_q, *mass_q,
-                &material,
+                *pos_p, *vel_p, *radius_p, *mass_p, *pos_q, *vel_q, *radius_q, *mass_q, &material,
             );
 
             let gpu_force = gpu_compute_contact_force(
-                *pos_p, *vel_p, *radius_p, 1.0 / mass_p,
-                *pos_q, *vel_q, *radius_q, 1.0 / mass_q,
-                gpu_params.0, gpu_params.1, gpu_params.2, gpu_params.3,
+                *pos_p,
+                *vel_p,
+                *radius_p,
+                1.0 / mass_p,
+                *pos_q,
+                *vel_q,
+                *radius_q,
+                1.0 / mass_q,
+                gpu_params.0,
+                gpu_params.1,
+                gpu_params.2,
+                gpu_params.3,
             );
 
-            let cpu_mag = (cpu_force[0].powi(2) + cpu_force[1].powi(2) + cpu_force[2].powi(2)).sqrt();
-            let gpu_mag = (gpu_force[0].powi(2) + gpu_force[1].powi(2) + gpu_force[2].powi(2)).sqrt();
+            let cpu_mag =
+                (cpu_force[0].powi(2) + cpu_force[1].powi(2) + cpu_force[2].powi(2)).sqrt();
+            let gpu_mag =
+                (gpu_force[0].powi(2) + gpu_force[1].powi(2) + gpu_force[2].powi(2)).sqrt();
 
             // 力がゼロでなければ方向と大きさを比較
             if cpu_mag > 1e-10 && gpu_mag > 1e-10 {
@@ -844,21 +918,27 @@ mod tests {
                 assert!(
                     cos_sim > 0.99,
                     "[{}] Force direction mismatch: cos_sim={:.6}",
-                    label, cos_sim
+                    label,
+                    cos_sim
                 );
 
                 // 大きさの差異を報告（CPU の force clamp の影響がなければ一致するはず）
                 assert!(
                     (mag_ratio - 1.0).abs() < 0.05,
                     "[{}] Force magnitude differs: CPU={:.4}, GPU={:.4}, ratio={:.4}",
-                    label, cpu_mag, gpu_mag, mag_ratio
+                    label,
+                    cpu_mag,
+                    gpu_mag,
+                    mag_ratio
                 );
             } else {
                 // 両方ゼロなら OK
                 assert!(
                     cpu_mag < 1e-6 && gpu_mag < 1e-6,
                     "[{}] One force is zero but not the other: CPU_mag={:.6}, GPU_mag={:.6}",
-                    label, cpu_mag, gpu_mag
+                    label,
+                    cpu_mag,
+                    gpu_mag
                 );
             }
         }
@@ -906,9 +986,7 @@ mod tests {
         for step in 0..steps {
             // CPU step
             let cpu_force = cpu_compute_contact_force(
-                cpu_pos_a, cpu_vel_a, radius, mass,
-                cpu_pos_b, cpu_vel_b, radius, mass,
-                &material,
+                cpu_pos_a, cpu_vel_a, radius, mass, cpu_pos_b, cpu_vel_b, radius, mass, &material,
             );
             let cpu_force_b = [-cpu_force[0], -cpu_force[1], -cpu_force[2]];
             gpu_integrate_step(&mut cpu_pos_a, &mut cpu_vel_a, cpu_force, mass_inv, dt);
@@ -916,9 +994,18 @@ mod tests {
 
             // GPU step
             let gpu_force = gpu_compute_contact_force(
-                gpu_pos_a, gpu_vel_a, radius, mass_inv,
-                gpu_pos_b, gpu_vel_b, radius, mass_inv,
-                gpu_params.0, gpu_params.1, gpu_params.2, gpu_params.3,
+                gpu_pos_a,
+                gpu_vel_a,
+                radius,
+                mass_inv,
+                gpu_pos_b,
+                gpu_vel_b,
+                radius,
+                mass_inv,
+                gpu_params.0,
+                gpu_params.1,
+                gpu_params.2,
+                gpu_params.3,
             );
             let gpu_force_b = [-gpu_force[0], -gpu_force[1], -gpu_force[2]];
             gpu_integrate_step(&mut gpu_pos_a, &mut gpu_vel_a, gpu_force, mass_inv, dt);
@@ -956,13 +1043,11 @@ mod tests {
 
         println!(
             "Final: CPU pos_a=[{:.6}, {:.6}, {:.6}], vel_a=[{:.6}, {:.6}, {:.6}]",
-            cpu_pos_a[0], cpu_pos_a[1], cpu_pos_a[2],
-            cpu_vel_a[0], cpu_vel_a[1], cpu_vel_a[2],
+            cpu_pos_a[0], cpu_pos_a[1], cpu_pos_a[2], cpu_vel_a[0], cpu_vel_a[1], cpu_vel_a[2],
         );
         println!(
             "Final: GPU pos_a=[{:.6}, {:.6}, {:.6}], vel_a=[{:.6}, {:.6}, {:.6}]",
-            gpu_pos_a[0], gpu_pos_a[1], gpu_pos_a[2],
-            gpu_vel_a[0], gpu_vel_a[1], gpu_vel_a[2],
+            gpu_pos_a[0], gpu_pos_a[1], gpu_pos_a[2], gpu_vel_a[0], gpu_vel_a[1], gpu_vel_a[2],
         );
         println!(
             "Max pos diff: {:.10}, max vel diff: {:.10}",
@@ -973,7 +1058,8 @@ mod tests {
         assert!(
             max_pos_diff < radius * 0.01,
             "Position diverged too much: max_pos_diff={:.8} (threshold={:.8})",
-            max_pos_diff, radius * 0.01
+            max_pos_diff,
+            radius * 0.01
         );
 
         // 速度の差も小さいべき

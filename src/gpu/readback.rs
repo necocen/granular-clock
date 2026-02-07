@@ -10,10 +10,7 @@ use bevy::{
         renderer::RenderDevice,
     },
 };
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc, RwLock,
-};
+use std::sync::{atomic::AtomicBool, Arc, RwLock};
 
 use super::buffers::ParticleGpu;
 
@@ -168,7 +165,14 @@ pub fn apply_gpu_results(
         );
 
         // 最初と最後の数粒子の値をサンプル出力
-        for i in [0usize, 1, 2, gpu_data.len() / 2, gpu_data.len() - 2, gpu_data.len() - 1] {
+        for i in [
+            0usize,
+            1,
+            2,
+            gpu_data.len() / 2,
+            gpu_data.len() - 2,
+            gpu_data.len() - 1,
+        ] {
             if i < gpu_data.len() {
                 let p = &gpu_data[i];
                 info!(

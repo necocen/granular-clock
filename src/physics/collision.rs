@@ -25,10 +25,10 @@ pub struct WallProperties {
 impl Default for WallProperties {
     fn default() -> Self {
         Self {
-            stiffness: 10000.0,  // ペナルティ剛性（高めに設定して貫通を減らす）
-            damping: 20.0,       // 減衰係数（参考値、実際は質量から計算）
-            friction: 0.4,       // 摩擦係数
-            restitution: 0.6,    // 反発係数（低めに設定）
+            stiffness: 10000.0, // ペナルティ剛性（高めに設定して貫通を減らす）
+            damping: 20.0,      // 減衰係数（参考値、実際は質量から計算）
+            friction: 0.4,      // 摩擦係数
+            restitution: 0.6,   // 反発係数（低めに設定）
         }
     }
 }
@@ -222,7 +222,8 @@ pub fn compute_wall_contact_force(
                     if f_n > 0.0 {
                         let v_t = Vec3::new(0.0, vel.y, vel.z);
                         if v_t.length() > 1e-6 {
-                            let f_t = (wall_props.friction * f_n).min(v_t.length() * wall_props.damping * 0.5);
+                            let f_t = (wall_props.friction * f_n)
+                                .min(v_t.length() * wall_props.damping * 0.5);
                             force -= f_t * v_t.normalize();
                         }
                     }
@@ -240,7 +241,8 @@ pub fn compute_wall_contact_force(
                     if f_n > 0.0 {
                         let v_t = Vec3::new(0.0, vel.y, vel.z);
                         if v_t.length() > 1e-6 {
-                            let f_t = (wall_props.friction * f_n).min(v_t.length() * wall_props.damping * 0.5);
+                            let f_t = (wall_props.friction * f_n)
+                                .min(v_t.length() * wall_props.damping * 0.5);
                             force -= f_t * v_t.normalize();
                         }
                     }

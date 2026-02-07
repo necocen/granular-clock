@@ -17,6 +17,7 @@ impl Default for PhysicsConstants {
 
 /// Velocity Verlet積分の前半ステップ
 /// 速度を半分更新し、位置を全更新
+#[allow(clippy::too_many_arguments)]
 pub fn integrate_first_half(
     pos: &mut Vec3,
     vel: &mut Vec3,
@@ -42,6 +43,7 @@ pub fn integrate_first_half(
 
 /// Velocity Verlet積分の後半ステップ
 /// 新しい力で速度を再度半更新
+#[allow(clippy::too_many_arguments)]
 pub fn integrate_second_half(
     vel: &mut Vec3,
     omega: &mut Vec3,

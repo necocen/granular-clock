@@ -14,15 +14,10 @@ use super::{buffers::GpuPhysicsBuffers, pipeline::GpuPhysicsPipelines, plugin::G
 pub struct GpuPhysicsLabel;
 
 /// GPU 物理計算を実行するレンダーグラフノード
+#[derive(Default)]
 pub struct GpuPhysicsNode {
     /// バインドグループ（フレームごとに更新）
     bind_group: Option<BindGroup>,
-}
-
-impl Default for GpuPhysicsNode {
-    fn default() -> Self {
-        Self { bind_group: None }
-    }
 }
 
 impl GpuPhysicsNode {
@@ -130,8 +125,8 @@ impl Node for GpuPhysicsNode {
             return Ok(());
         }
 
-        let workgroups_64 = (num_particles + 63) / 64;
-        let workgroups_256 = (num_particles + 255) / 256;
+        let workgroups_64 = num_particles.div_ceil(64);
+        let workgroups_256 = num_particles.div_ceil(256);
 
         let encoder = render_context.command_encoder();
 

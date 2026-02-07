@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
-use crate::physics::{ParticleBundle, ParticleProperties, ParticleSize, Position};
-use crate::simulation::Container;
+use crate::physics::{ParticleBundle, ParticleSize};
+use crate::simulation::{Container, SimulationConfig};
 
 /// 粒子用のメッシュとマテリアルのハンドル
 #[derive(Resource)]
@@ -16,33 +16,6 @@ pub struct ParticleMeshes {
 pub struct ContainerEntities {
     pub floor: Entity,
     pub divider: Entity,
-}
-
-/// シミュレーションの設定
-#[derive(Resource, Clone)]
-pub struct SimulationConfig {
-    /// 大粒子の半径
-    pub large_radius: f32,
-    /// 小粒子の半径
-    pub small_radius: f32,
-    /// 粒子密度
-    pub density: f32,
-    /// 大粒子の数
-    pub num_large: u32,
-    /// 小粒子の数
-    pub num_small: u32,
-}
-
-impl Default for SimulationConfig {
-    fn default() -> Self {
-        Self {
-            large_radius: 0.01,  // 10 mm
-            small_radius: 0.006, // 6 mm
-            density: 5000.0,     // kg/m^3
-            num_large: 250,
-            num_small: 1500,
-        }
-    }
 }
 
 /// レンダリング用のリソースをセットアップ
@@ -125,8 +98,7 @@ pub fn setup_rendering(
             Mesh3d(divider_mesh),
             MeshMaterial3d(divider_material),
             Transform::from_translation(
-                container.base_position
-                    - Vec3::Y * container.half_extents.y
+                container.base_position - Vec3::Y * container.half_extents.y
                     + Vec3::Y * container.divider_height / 2.0,
             ),
         ))
@@ -146,18 +118,14 @@ pub fn setup_rendering(
     commands.spawn((
         Mesh3d(front_back_mesh.clone()),
         MeshMaterial3d(wall_material.clone()),
-        Transform::from_translation(
-            container.base_position + Vec3::Z * container.half_extents.z,
-        ),
+        Transform::from_translation(container.base_position + Vec3::Z * container.half_extents.z),
     ));
 
     // 後壁
     commands.spawn((
         Mesh3d(front_back_mesh),
         MeshMaterial3d(wall_material.clone()),
-        Transform::from_translation(
-            container.base_position - Vec3::Z * container.half_extents.z,
-        ),
+        Transform::from_translation(container.base_position - Vec3::Z * container.half_extents.z),
     ));
 
     // 左右の壁
@@ -171,18 +139,14 @@ pub fn setup_rendering(
     commands.spawn((
         Mesh3d(left_right_mesh.clone()),
         MeshMaterial3d(wall_material.clone()),
-        Transform::from_translation(
-            container.base_position - Vec3::X * container.half_extents.x,
-        ),
+        Transform::from_translation(container.base_position - Vec3::X * container.half_extents.x),
     ));
 
     // 右壁
     commands.spawn((
         Mesh3d(left_right_mesh),
         MeshMaterial3d(wall_material),
-        Transform::from_translation(
-            container.base_position + Vec3::X * container.half_extents.x,
-        ),
+        Transform::from_translation(container.base_position + Vec3::X * container.half_extents.x),
     ));
 
     commands.insert_resource(ContainerEntities { floor, divider });
@@ -211,7 +175,12 @@ pub fn spawn_particles(
         let pos = Vec3::new(x, y, z);
 
         commands.spawn((
-            ParticleBundle::new(pos, config.large_radius, config.density, ParticleSize::Large),
+            ParticleBundle::new(
+                pos,
+                config.large_radius,
+                config.density,
+                ParticleSize::Large,
+            ),
             Mesh3d(meshes.sphere.clone()),
             MeshMaterial3d(meshes.large_material.clone()),
             Transform::from_translation(pos).with_scale(Vec3::splat(config.large_radius)),
@@ -227,22 +196,17 @@ pub fn spawn_particles(
         let pos = Vec3::new(x, y, z);
 
         commands.spawn((
-            ParticleBundle::new(pos, config.small_radius, config.density, ParticleSize::Small),
+            ParticleBundle::new(
+                pos,
+                config.small_radius,
+                config.density,
+                ParticleSize::Small,
+            ),
             Mesh3d(meshes.sphere.clone()),
             MeshMaterial3d(meshes.small_material.clone()),
             Transform::from_translation(pos).with_scale(Vec3::splat(config.small_radius)),
         ));
     }
-}
-
-/// 物理位置からレンダリング用Transformを同期
-pub fn sync_transforms(mut particles: Query<(&Position, &ParticleProperties, &mut Transform)>) {
-    particles
-        .par_iter_mut()
-        .for_each(|(pos, props, mut transform)| {
-            transform.translation = pos.0;
-            transform.scale = Vec3::splat(props.radius);
-        });
 }
 
 /// コンテナの位置を更新
@@ -259,15 +223,13 @@ pub fn update_container_transforms(
 
     // 床を更新
     if let Ok(mut transform) = transforms.get_mut(entities.floor) {
-        transform.translation = container.base_position
-            - Vec3::Y * container.half_extents.y
-            + offset;
+        transform.translation =
+            container.base_position - Vec3::Y * container.half_extents.y + offset;
     }
 
     // 仕切りを更新
     if let Ok(mut transform) = transforms.get_mut(entities.divider) {
-        transform.translation = container.base_position
-            - Vec3::Y * container.half_extents.y
+        transform.translation = container.base_position - Vec3::Y * container.half_extents.y
             + Vec3::Y * container.divider_height / 2.0
             + offset;
     }

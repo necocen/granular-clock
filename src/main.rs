@@ -8,35 +8,25 @@ mod ui;
 
 use bevy::prelude::*;
 
-/// GridSettings から SpatialHashGrid を初期化するシステム
-fn init_spatial_hash_grid(mut commands: Commands, grid_settings: Res<GridSettings>) {
-    commands.insert_resource(SpatialHashGrid::new(
-        grid_settings.cell_size,
-        grid_settings.table_size,
-    ));
-}
-
 use analysis::{update_distribution, CurrentDistribution, DistributionHistory};
 use gpu::{apply_gpu_results, GpuPhysicsPlugin};
 // use debug::debug_particles; // 必要時のみ有効化
 use physics::{
-    ContactHistory, GridSettings, MaterialProperties, PhysicsConstants, SpatialHashGrid,
-    WallProperties,
+    init_spatial_hash_grid, ContactHistory, MaterialProperties, PhysicsConstants, WallProperties,
 };
 use rendering::{
     camera_plugin, hide_particle_entities, setup_camera, setup_rendering, spawn_particles,
-    update_container_transforms, GpuInstancingPlugin, SimulationConfig,
+    update_container_transforms, GpuInstancingPlugin,
 };
 use simulation::{
-    run_physics_substeps, update_oscillation, Container, OscillationParams, PhysicsBackend,
-    SimulationSettings, SimulationTime,
+    run_physics_substeps, update_oscillation_for_gpu, Container, OscillationParams, PhysicsBackend,
+    SimulationConfig, SimulationSettings, SimulationState, SimulationTime,
 };
 use ui::{
     handle_amplitude_buttons, handle_control_buttons, handle_frequency_buttons,
-    handle_oscillation_toggle, handle_physics_backend_toggle, handle_reset,
-    setup_bevy_ui_controls, setup_distribution_graph, update_button_colors,
-    update_distribution_display, update_graph_lines, update_simulation_time_display,
-    SimulationState,
+    handle_oscillation_toggle, handle_physics_backend_toggle, handle_reset, setup_bevy_ui_controls,
+    setup_distribution_graph, update_button_colors, update_distribution_display,
+    update_graph_lines, update_simulation_time_display,
 };
 
 fn main() {
@@ -74,15 +64,17 @@ fn main() {
         // 物理サブステップ（CPU物理）
         .add_systems(
             Update,
-            run_physics_substeps.run_if(|backend: Res<PhysicsBackend>| *backend == PhysicsBackend::Cpu),
+            run_physics_substeps
+                .run_if(|backend: Res<PhysicsBackend>| *backend == PhysicsBackend::Cpu),
         )
         // GPU 物理結果の適用
         .add_systems(
             Update,
-            apply_gpu_results.run_if(|backend: Res<PhysicsBackend>| *backend == PhysicsBackend::Gpu),
+            apply_gpu_results
+                .run_if(|backend: Res<PhysicsBackend>| *backend == PhysicsBackend::Gpu),
         )
-        // 振動
-        .add_systems(Update, update_oscillation)
+        // 振動（GPU モード用。CPU モードはサブステップ内で更新）
+        .add_systems(Update, update_oscillation_for_gpu)
         // 個別パーティクルを非表示（インスタンシングで描画）
         .add_systems(Update, hide_particle_entities)
         .add_systems(Update, update_container_transforms)

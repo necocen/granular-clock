@@ -11,8 +11,8 @@ use bevy::{
     ecs::system::{lifetimeless::*, SystemParamItem},
     mesh::VertexBufferLayout,
     pbr::{
-        MeshPipeline, MeshPipelineKey, RenderMeshInstances, SetMeshBindGroup,
-        SetMeshViewBindGroup, SetMeshViewBindingArrayBindGroup,
+        MeshPipeline, MeshPipelineKey, RenderMeshInstances, SetMeshBindGroup, SetMeshViewBindGroup,
+        SetMeshViewBindingArrayBindGroup,
     },
     prelude::*,
     render::{
@@ -34,8 +34,9 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::gpu::GpuPhysicsBuffers;
 use crate::physics::{ParticleProperties, ParticleSize, Position};
-use crate::rendering::{ParticleMeshes, SimulationConfig};
+use crate::rendering::ParticleMeshes;
 use crate::simulation::PhysicsBackend;
+use crate::simulation::SimulationConfig;
 
 // ──────────────────── Data types ────────────────────
 
@@ -124,6 +125,7 @@ pub struct InstanceBuffer {
 
 /// Persistent resources for particle instancing (Render World)
 #[derive(Resource)]
+#[allow(dead_code)]
 pub struct ParticleInstanceResources {
     /// Combined instance buffer (all particles)
     pub instance_buffer: Buffer,
@@ -133,6 +135,8 @@ pub struct ParticleInstanceResources {
     pub compute_pipeline: CachedComputePipelineId,
     /// Current capacity
     pub capacity: u32,
+    /// 共有型定義シェーダー（#import 解決用にハンドルを保持）
+    pub _physics_types_shader: Handle<Shader>,
 }
 
 /// Custom pipeline extending MeshPipeline for instanced particle rendering
@@ -161,10 +165,8 @@ impl SpecializedMeshPipeline for ParticleInstancePipeline {
             depth_stencil.depth_write_enabled = true;
         }
         if let Some(ref mut frag) = desc.fragment {
-            for target in &mut frag.targets {
-                if let Some(ref mut state) = target {
-                    state.blend = None;
-                }
+            for ref mut state in frag.targets.iter_mut().flatten() {
+                state.blend = None;
             }
         }
 
@@ -231,8 +233,7 @@ impl<P: PhaseItem> RenderCommand<P> for DrawMeshInstanced {
         let mesh_instances = mesh_instances.into_inner();
         let allocator = allocator.into_inner();
 
-        let Some(mesh_instance) = mesh_instances.render_mesh_queue_data(item.main_entity())
-        else {
+        let Some(mesh_instance) = mesh_instances.render_mesh_queue_data(item.main_entity()) else {
             return RenderCommandResult::Skip;
         };
         let Some(gpu_mesh) = meshes.get(mesh_instance.mesh_asset_id) else {
@@ -251,8 +252,7 @@ impl<P: PhaseItem> RenderCommand<P> for DrawMeshInstanced {
                 index_format,
                 count,
             } => {
-                let Some(index_slice) =
-                    allocator.mesh_index_slice(&mesh_instance.mesh_asset_id)
+                let Some(index_slice) = allocator.mesh_index_slice(&mesh_instance.mesh_asset_id)
                 else {
                     return RenderCommandResult::Skip;
                 };
@@ -360,13 +360,7 @@ fn spawn_particle_batch(mut commands: Commands, meshes: Res<ParticleMeshes>) {
 
 /// Hide individual particle entities (instancing handles all rendering)
 pub fn hide_particle_entities(
-    mut particles: Query<
-        &mut Visibility,
-        (
-            Added<Position>,
-            Without<ParticleBatchMarker>,
-        ),
-    >,
+    mut particles: Query<&mut Visibility, (Added<Position>, Without<ParticleBatchMarker>)>,
 ) {
     for mut v in &mut particles {
         *v = Visibility::Hidden;
@@ -430,6 +424,7 @@ fn instance_compute_bind_group_layout_desc() -> BindGroupLayoutDescriptor {
 }
 
 /// Prepare instance buffer: GPU mode uses compute shader, CPU mode uploads from ECS
+#[allow(clippy::too_many_arguments)]
 fn prepare_particle_instances(
     mut commands: Commands,
     render_device: Res<RenderDevice>,
@@ -472,23 +467,24 @@ fn prepare_particle_instances(
             mapped_at_creation: false,
         });
 
+        let physics_types_shader: Handle<Shader> = asset_server.load("shaders/physics_types.wgsl");
         let shader = asset_server.load("shaders/particle_to_instance.wgsl");
-        let compute_pipeline =
-            pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
-                label: Some("particle_to_instance_pipeline".into()),
-                layout: vec![instance_compute_bind_group_layout_desc()],
-                shader,
-                shader_defs: vec![],
-                entry_point: Some("main".into()),
-                push_constant_ranges: vec![],
-                zero_initialize_workgroup_memory: true,
-            });
+        let compute_pipeline = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
+            label: Some("particle_to_instance_pipeline".into()),
+            layout: vec![instance_compute_bind_group_layout_desc()],
+            shader,
+            shader_defs: vec![],
+            entry_point: Some("main".into()),
+            push_constant_ranges: vec![],
+            zero_initialize_workgroup_memory: true,
+        });
 
         commands.insert_resource(ParticleInstanceResources {
             instance_buffer,
             params_buffer,
             compute_pipeline,
             capacity,
+            _physics_types_shader: physics_types_shader,
         });
         return; // Resources will be available next frame
     }
@@ -556,7 +552,7 @@ fn prepare_particle_instances(
             });
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
-            let workgroups = (total + 63) / 64;
+            let workgroups = total.div_ceil(64);
             pass.dispatch_workgroups(workgroups, 1, 1);
         }
 
@@ -587,6 +583,7 @@ fn prepare_particle_instances(
 }
 
 /// Queue particle batch entities into Transparent3d render phase
+#[allow(clippy::too_many_arguments)]
 fn queue_particle_instances(
     draw_funcs: Res<DrawFunctions<Transparent3d>>,
     custom_pipeline: Option<Res<ParticleInstancePipeline>>,
@@ -594,10 +591,7 @@ fn queue_particle_instances(
     pipeline_cache: Res<PipelineCache>,
     meshes: Res<RenderAssets<RenderMesh>>,
     mesh_instances: Res<RenderMeshInstances>,
-    batch_query: Query<
-        (Entity, &bevy::render::sync_world::MainEntity),
-        With<ParticleBatchMarker>,
-    >,
+    batch_query: Query<(Entity, &bevy::render::sync_world::MainEntity), With<ParticleBatchMarker>>,
     mut phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
     views: Query<(&ExtractedView, &Msaa)>,
 ) {
@@ -614,8 +608,6 @@ fn queue_particle_instances(
 
         let base_key = MeshPipelineKey::from_msaa_samples(msaa.samples())
             | MeshPipelineKey::from_hdr(view.hdr);
-
-        let rangefinder = view.rangefinder3d();
 
         for (render_entity, main_entity) in &batch_query {
             let Some(mesh_instance) = mesh_instances.render_mesh_queue_data(*main_entity) else {
