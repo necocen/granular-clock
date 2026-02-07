@@ -154,6 +154,20 @@ impl SpecializedMeshPipeline for ParticleInstancePipeline {
         desc.vertex.shader = self.shader.clone();
         desc.fragment.as_mut().unwrap().shader = self.shader.clone();
 
+        // パーティクルは不透明: デプス書き込み有効、ブレンド無し
+        // Transparent3d フェーズで描画されるが、デプスバッファに書き込むことで
+        // 後から描画される仕切り等の透明オブジェクトとの前後関係を正しく処理する
+        if let Some(ref mut depth_stencil) = desc.depth_stencil {
+            depth_stencil.depth_write_enabled = true;
+        }
+        if let Some(ref mut frag) = desc.fragment {
+            for target in &mut frag.targets {
+                if let Some(ref mut state) = target {
+                    state.blend = None;
+                }
+            }
+        }
+
         // Add per-instance vertex buffer layout
         desc.vertex.buffers.push(VertexBufferLayout {
             array_stride: std::mem::size_of::<InstanceData>() as u64,
@@ -620,11 +634,15 @@ fn queue_particle_instances(
                 continue;
             };
 
+            // Sort distance を最小にして、他の透明オブジェクト（仕切り等）より先に描画。
+            // Bevy の Transparent3d は距離の昇順でソートする（小さい値が先に描画）。
+            // パーティクルはデプスバッファに書き込むので、後から描画される
+            // 仕切りが正しくデプステストされ、粒子を適切に遮蔽できる。
             phase.add(Transparent3d {
                 entity: (render_entity, *main_entity),
                 pipeline: pipeline_id,
                 draw_function,
-                distance: rangefinder.distance(&mesh_instance.center),
+                distance: f32::NEG_INFINITY,
                 batch_range: 0..1,
                 extra_index: PhaseItemExtraIndex::None,
                 indexed: true,

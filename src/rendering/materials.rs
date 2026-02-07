@@ -37,8 +37,8 @@ impl Default for SimulationConfig {
     fn default() -> Self {
         Self {
             large_radius: 0.01,  // 10 mm
-            small_radius: 0.004, // 4 mm
-            density: 2500.0,     // kg/m^3
+            small_radius: 0.006, // 6 mm
+            density: 5000.0,     // kg/m^3
             num_large: 250,
             num_small: 1500,
         }

@@ -122,22 +122,30 @@ fn integrate(@builtin(global_invocation_id) gid: vec3<u32>) {
         p.vel.z = -p.vel.z * params.restitution;
     }
 
-    // 仕切り（中央のX=0付近）
+    // 仕切り（中央のX=0付近）— 位置ベースの押し出し（CPU版と同等）
     let divider_top = floor_y + params.divider_height;
     let half_thickness = params.divider_thickness * 0.5;
 
-    if (p.pos.y < divider_top) {
-        // 仕切りの範囲内
-        if (p.pos.x > -half_thickness - p.radius && p.pos.x < half_thickness + p.radius) {
-            // 左から来た場合
-            if (p.vel.x > 0.0 && p.pos.x < 0.0) {
-                p.pos.x = -half_thickness - p.radius;
-                p.vel.x = -p.vel.x * params.restitution;
-            }
-            // 右から来た場合
-            else if (p.vel.x < 0.0 && p.pos.x > 0.0) {
-                p.pos.x = half_thickness + p.radius;
-                p.vel.x = -p.vel.x * params.restitution;
+    if (p.pos.y - p.radius < divider_top) {
+        let particle_left = p.pos.x - p.radius;
+        let particle_right = p.pos.x + p.radius;
+
+        // 粒子が仕切りと重なっているかチェック
+        if (particle_left < half_thickness && particle_right > -half_thickness) {
+            if (p.pos.x >= 0.0) {
+                // 右側に押し出す
+                let overlap = half_thickness - particle_left;
+                if (overlap > 0.0) {
+                    p.pos.x += overlap;
+                    p.vel.x = abs(p.vel.x) * params.restitution;
+                }
+            } else {
+                // 左側に押し出す
+                let overlap = particle_right - (-half_thickness);
+                if (overlap > 0.0) {
+                    p.pos.x -= overlap;
+                    p.vel.x = -abs(p.vel.x) * params.restitution;
+                }
             }
         }
     }
