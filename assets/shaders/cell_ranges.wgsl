@@ -18,23 +18,20 @@ fn build_cell_ranges(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
+    let num_cells = params.grid_dim * params.grid_dim * params.grid_dim;
     let key = keys[id];
 
-    // 最初の粒子または前の粒子と異なるキーの場合、セルの開始
-    if (id == 0u) {
-        cell_ranges[key].x = 0u;
-    } else {
-        let prev_key = keys[id - 1u];
-        if (key != prev_key) {
-            // 前のセルの終了
-            cell_ranges[prev_key].y = id;
-            // 新しいセルの開始
-            cell_ranges[key].x = id;
-        }
+    // 各セルの開始インデックス thread のみが start/end を一括で書く。
+    // x/y を別 thread から更新すると競合する可能性があるため避ける。
+    let is_cell_start = id == 0u || key != keys[id - 1u];
+    if (!is_cell_start || key >= num_cells) {
+        return;
     }
 
-    // 最後の粒子の場合、現在のセルの終了をマーク
-    if (id == params.num_particles - 1u) {
-        cell_ranges[key].y = params.num_particles;
+    var end = id + 1u;
+    while (end < params.num_particles && keys[end] == key) {
+        end += 1u;
     }
+
+    cell_ranges[key] = vec2<u32>(id, end);
 }

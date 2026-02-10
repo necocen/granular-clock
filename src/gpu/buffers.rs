@@ -83,8 +83,16 @@ pub struct SimulationParams {
     pub divider_thickness: f32,
     /// 転がり摩擦係数
     pub rolling_friction: f32,
-    /// パディング
-    pub _pad: f32,
+    /// 壁との反発係数（粒子間とは別）
+    pub wall_restitution: f32,
+    /// 壁との摩擦係数（粒子間とは別）
+    pub wall_friction: f32,
+    /// 壁減衰係数
+    pub wall_damping: f32,
+    /// 壁剛性
+    pub wall_stiffness: f32,
+    /// パディング（uniformレイアウト安定化）
+    pub _pad_end: f32,
 }
 
 impl Default for SimulationParams {
@@ -107,7 +115,11 @@ impl Default for SimulationParams {
             container_half_z: 0.05,
             divider_thickness: 0.005,
             rolling_friction: 0.1,
-            _pad: 0.0,
+            wall_restitution: 0.3,
+            wall_friction: 0.4,
+            wall_damping: 20.0,
+            wall_stiffness: 10000.0,
+            _pad_end: 0.0,
         }
     }
 }
@@ -141,6 +153,8 @@ pub struct GpuPhysicsBuffers {
     pub params: Buffer,
     /// 粒子数
     pub num_particles: u32,
+    /// バッファ容量（粒子スロット数）
+    pub capacity: u32,
     /// ping-pong フラグ
     pub ping_pong: bool,
     /// 最後にアップロードしたデータ世代
@@ -219,6 +233,7 @@ impl GpuPhysicsBuffers {
             torques,
             params,
             num_particles,
+            capacity: num_particles,
             ping_pong: false,
             last_uploaded_generation: 0,
         }

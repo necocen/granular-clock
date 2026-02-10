@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use std::collections::HashMap;
 
 use crate::physics::{
     clamp_to_container, clamp_velocity, compute_particle_contact_force, compute_wall_contact_force,
@@ -51,60 +52,73 @@ fn compute_particle_collisions(
     sim_time: &SimulationTime,
 ) {
     let dt = sim_time.dt;
+    let n = particles.particles.len();
+    if n < 2 {
+        return;
+    }
 
-    // 衝突ペアを収集
-    let mut collision_pairs: Vec<(usize, usize)> = Vec::new();
-    for bucket_idx in 0..grid.table_size {
-        let bucket = grid.buckets[bucket_idx].lock();
-        let indices: Vec<usize> = bucket.clone();
-        drop(bucket);
+    // セル -> 粒子インデックス群を構築（正確な近傍探索用）
+    let mut cells = Vec::with_capacity(n);
+    let mut cell_map: HashMap<(i32, i32, i32), Vec<usize>> = HashMap::with_capacity(n);
+    for (i, p) in particles.particles.iter().enumerate() {
+        let cell = (
+            (p.position.x / grid.cell_size).floor() as i32,
+            (p.position.y / grid.cell_size).floor() as i32,
+            (p.position.z / grid.cell_size).floor() as i32,
+        );
+        cells.push(cell);
+        cell_map.entry(cell).or_default().push(i);
+    }
 
-        for i in 0..indices.len() {
-            for j in (i + 1)..indices.len() {
-                collision_pairs.push((indices[i], indices[j]));
+    let mut force_accum = vec![Vec3::ZERO; n];
+    let mut torque_accum = vec![Vec3::ZERO; n];
+
+    // 各粒子について 27 近傍セルのみ探索し、j > i で重複を防ぐ
+    for i in 0..n {
+        let (cx, cy, cz) = cells[i];
+        let p_i = &particles.particles[i];
+
+        for &(dx, dy, dz) in SpatialHashGrid::neighbor_offsets() {
+            let neighbor_cell = (cx + dx, cy + dy, cz + dz);
+            let Some(indices) = cell_map.get(&neighbor_cell) else {
+                continue;
+            };
+
+            for &j in indices {
+                if j <= i {
+                    continue;
+                }
+
+                let p_j = &particles.particles[j];
+                let contact_state = contact_history.get_or_create(i, j);
+
+                let (force_i, force_j) = compute_particle_contact_force(
+                    p_i.position,
+                    p_i.velocity,
+                    p_i.angular_velocity,
+                    p_i.radius,
+                    p_i.mass,
+                    p_j.position,
+                    p_j.velocity,
+                    p_j.angular_velocity,
+                    p_j.radius,
+                    p_j.mass,
+                    material,
+                    contact_state,
+                    dt,
+                );
+
+                force_accum[i] += force_i.force;
+                torque_accum[i] += force_i.torque;
+                force_accum[j] += force_j.force;
+                torque_accum[j] += force_j.torque;
             }
         }
     }
 
-    // 衝突力を計算して蓄積
-    for (i1, i2) in collision_pairs {
-        // split_at_mut で安全に 2 つの要素への可変参照を取得
-        let (lo, hi) = if i1 < i2 { (i1, i2) } else { (i2, i1) };
-        let (left, right) = particles.particles.split_at_mut(hi);
-        let p_lo = &left[lo];
-        let p_hi = &right[0];
-
-        let contact_state = contact_history.get_or_create(i1, i2);
-
-        let (force_lo, force_hi) = compute_particle_contact_force(
-            p_lo.position,
-            p_lo.velocity,
-            p_lo.angular_velocity,
-            p_lo.radius,
-            p_lo.mass,
-            p_hi.position,
-            p_hi.velocity,
-            p_hi.angular_velocity,
-            p_hi.radius,
-            p_hi.mass,
-            material,
-            contact_state,
-            dt,
-        );
-
-        // i1 < i2 のとき lo=i1, hi=i2 なので force_lo→i1, force_hi→i2
-        // i1 > i2 のとき lo=i2, hi=i1 なので force_lo→i2, force_hi→i1
-        if i1 < i2 {
-            particles.particles[i1].force += force_lo.force;
-            particles.particles[i1].torque += force_lo.torque;
-            particles.particles[i2].force += force_hi.force;
-            particles.particles[i2].torque += force_hi.torque;
-        } else {
-            particles.particles[i2].force += force_lo.force;
-            particles.particles[i2].torque += force_lo.torque;
-            particles.particles[i1].force += force_hi.force;
-            particles.particles[i1].torque += force_hi.torque;
-        }
+    for i in 0..n {
+        particles.particles[i].force += force_accum[i];
+        particles.particles[i].torque += torque_accum[i];
     }
 }
 
@@ -233,6 +247,8 @@ pub fn run_physics_substeps(world: &mut World) {
         compute_wall_collisions(&mut particles, &container, &wall_props);
         integrate_positions(&mut particles, &physics, &sim_time);
         clamp_particles(&mut particles, &container);
+        // 後半ステップの力計算は更新後の位置に対して行う
+        build_spatial_grid(grid, &particles);
         clear_forces(&mut particles);
         compute_particle_collisions(
             &mut particles,

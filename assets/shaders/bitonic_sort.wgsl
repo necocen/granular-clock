@@ -4,8 +4,9 @@
 #import granular_clock::physics_types::{Particle, Params}
 
 struct SortParams {
-    step_size: u32,
-    pass_offset: u32,
+    j: u32,
+    k: u32,
+    n: u32,
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -21,38 +22,29 @@ var<push_constant> sort_params: SortParams;
 @compute @workgroup_size(256)
 fn bitonic_sort_step(@builtin(global_invocation_id) gid: vec3<u32>) {
     let id = gid.x;
-    if (id >= params.num_particles) {
+    if (id >= sort_params.n) {
         return;
     }
 
-    let step_size = sort_params.step_size;
-    let pass_offset = sort_params.pass_offset;
+    // 標準 bitonic compare-exchange:
+    // partner = id XOR j, direction は (id & k) で決まる
+    let partner = id ^ sort_params.j;
+    if (partner >= sort_params.n || partner <= id) {
+        return;
+    }
 
-    // Bitonic sort のステップ
-    let block_size = step_size * 2u;
-    let block_id = id / block_size;
-    let local_id = id % block_size;
+    let key_a = keys[id];
+    let key_b = keys[partner];
+    let id_a = particle_ids[id];
+    let id_b = particle_ids[partner];
 
-    // 比較・交換
-    let ascending = (block_id % 2u) == 0u;
+    let ascending = (id & sort_params.k) == 0u;
+    let should_swap = (ascending && key_a > key_b) || (!ascending && key_a < key_b);
 
-    let half = step_size;
-    if (local_id < half) {
-        let partner = id + half;
-        if (partner < params.num_particles) {
-            let key_a = keys[id];
-            let key_b = keys[partner];
-            let id_a = particle_ids[id];
-            let id_b = particle_ids[partner];
-
-            let should_swap = (ascending && key_a > key_b) || (!ascending && key_a < key_b);
-
-            if (should_swap) {
-                keys[id] = key_b;
-                keys[partner] = key_a;
-                particle_ids[id] = id_b;
-                particle_ids[partner] = id_a;
-            }
-        }
+    if (should_swap) {
+        keys[id] = key_b;
+        keys[partner] = key_a;
+        particle_ids[id] = id_b;
+        particle_ids[partner] = id_a;
     }
 }

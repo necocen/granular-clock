@@ -10,31 +10,33 @@
 @group(0) @binding(5) var<storage, read_write> cell_ranges: array<vec2<u32>>;
 @group(0) @binding(6) var<storage, read_write> forces: array<vec4<f32>>;
 
-fn hash_cell(cell: vec3<u32>) -> u32 {
-    let dim = params.grid_dim;
-    return (cell.z * dim + cell.y) * dim + cell.x;
+fn hash_cell(cell: vec3<i32>) -> u32 {
+    let dim = i32(params.grid_dim);
+    let half = dim / 2;
+    let shifted = cell + vec3<i32>(half, half, half);
+    let c = vec3<i32>(
+        clamp(shifted.x, 0, dim - 1),
+        clamp(shifted.y, 0, dim - 1),
+        clamp(shifted.z, 0, dim - 1),
+    );
+    return u32((c.z * dim + c.y) * dim + c.x);
 }
 
 @compute @workgroup_size(64)
 fn build_keys(@builtin(global_invocation_id) gid: vec3<u32>) {
     let id = gid.x;
-    if (id >= params.num_particles) {
-        return;
+    if (id < params.num_particles) {
+        let p = particles_in[id];
+
+        // CPU 実装と同じく原点基準でセル化し、インデックス化時のみ中心シフトする
+        let cell = vec3<i32>(floor(p.pos / params.cell_size));
+
+        let key = hash_cell(cell);
+        keys[id] = key;
+        particle_ids[id] = id;
+    } else {
+        // 2 のべき乗パディング領域は番兵値で埋める（ソート時に末尾へ送る）
+        keys[id] = 0xffffffffu;
+        particle_ids[id] = 0xffffffffu;
     }
-
-    let p = particles_in[id];
-
-    // 位置からセル座標を計算
-    let world_half = vec3<f32>(params.container_half_x, params.container_half_y, params.container_half_z);
-    let normalized_pos = (p.pos + world_half) / params.cell_size;
-    let cell = vec3<u32>(
-        clamp(u32(floor(normalized_pos.x)), 0u, params.grid_dim - 1u),
-        clamp(u32(floor(normalized_pos.y)), 0u, params.grid_dim - 1u),
-        clamp(u32(floor(normalized_pos.z)), 0u, params.grid_dim - 1u)
-    );
-
-    let key = hash_cell(cell);
-
-    keys[id] = key;
-    particle_ids[id] = id;
 }

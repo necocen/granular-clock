@@ -29,5 +29,9 @@ struct Params {
     container_half_z: f32,
     divider_thickness: f32,
     rolling_friction: f32,
-    _pad: f32,
+    wall_restitution: f32,
+    wall_friction: f32,
+    wall_damping: f32,
+    wall_stiffness: f32,
+    _pad_end: f32,
 }

@@ -21,6 +21,10 @@ parking_lot = "0.12.5"
 # WASM-only dependencies
 getrandom = { version = "0.3", features = ["wasm_js"] }
 
+[dev-dependencies]
+pollster = "0.4"
+wgpu = "27.0.1"
+
 [profile.dev]
 opt-level = 1
 

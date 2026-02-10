@@ -23,7 +23,7 @@ impl Default for SimulationTime {
     fn default() -> Self {
         Self {
             elapsed: 0.0,
-            dt: 1.0 / 5000.0, // 5000Hz相当の細かいタイムステップ
+            dt: 1.0 / 2500.0, // 2500Hz相当の細かいタイムステップ
         }
     }
 }
@@ -50,7 +50,7 @@ pub struct SimulationSettings {
 impl Default for SimulationSettings {
     fn default() -> Self {
         Self {
-            substeps_per_frame: 10, // 10サブステップ/フレーム
+            substeps_per_frame: 3, // 3サブステップ/フレーム
         }
     }
 }

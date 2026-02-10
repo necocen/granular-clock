@@ -27,8 +27,8 @@ impl Default for WallProperties {
         Self {
             stiffness: 10000.0, // ペナルティ剛性（高めに設定して貫通を減らす）
             damping: 20.0,      // 減衰係数（参考値、実際は質量から計算）
-            friction: 0.4,      // 摩擦係数
-            restitution: 0.3,   // 反発係数（低めに設定）
+            friction: 0.6,      // 摩擦係数
+            restitution: 0.5,   // 反発係数（低めに設定）
         }
     }
 }
@@ -77,6 +77,16 @@ fn compute_wall_normal_force(
     (f_spring + f_damp).max(0.0)
 }
 
+/// 仕切り中心で法線方向が決められない場合のタイブレーク（CPU/GPUで同一式）。
+fn divider_tiebreak_sign(pos: Vec3) -> f32 {
+    let qy = (pos.y * 1024.0).floor() as i32;
+    let qz = (pos.z * 1024.0).floor() as i32;
+    let seed = (qy as u32).wrapping_mul(0x9E37_79B1)
+        ^ (qz as u32).wrapping_mul(0x85EB_CA6B)
+        ^ 0xC2B2_AE35;
+    if (seed & 1) == 0 { -1.0 } else { 1.0 }
+}
+
 /// 粒子と壁との接触力を計算
 pub fn compute_wall_contact_force(
     pos: Vec3,
@@ -104,11 +114,15 @@ pub fn compute_wall_contact_force(
     let is_floor_contact = floor_overlap > -contact_threshold;
 
     if is_floor_contact {
-        // 法線力の計算（実際のoverlapがある場合のみ）
+        // 法線力の計算（実際の overlap がある場合）
         let effective_overlap = floor_overlap.max(0.0);
+        let gravity_mag = 9.81;
+        let mut floor_normal_force = 0.0;
+
         if effective_overlap > 0.0 {
             let v_n = vel.y;
             let f_n = compute_wall_normal_force(effective_overlap, v_n, radius, mass, wall_props);
+            floor_normal_force += f_n;
             force.y += f_n;
         }
 
@@ -117,19 +131,27 @@ pub fn compute_wall_contact_force(
         if vel.y < 0.0 && vel.y > -0.01 {
             // 微小な下向き速度を急速に減衰（床との接触を維持）
             let damping_force = -vel.y * mass * 100.0; // 強い減衰
+            floor_normal_force += damping_force;
             force.y += damping_force;
         }
 
+        // ちょうど床に乗っている（overlap=0）状態でも、
+        // 後半ステップで重力だけが残らないよう支持力を補う
+        const SUPPORT_EPS: f32 = 1e-6;
+        if floor_overlap >= -SUPPORT_EPS && vel.y <= 0.0 {
+            let support_force = (mass * gravity_mag - floor_normal_force).max(0.0);
+            if support_force > 0.0 {
+                floor_normal_force += support_force;
+                force.y += support_force;
+            }
+        }
+
         // 接線摩擦（Coulomb摩擦モデル）
-        // 床に乗っている場合、垂直抗力は少なくとも重力と釣り合う
-        let gravity_mag = 9.81;
-        let normal_force = if effective_overlap > 0.0 {
-            let f_n = compute_wall_normal_force(effective_overlap, vel.y, radius, mass, wall_props);
-            // 重力を支えるのに十分な垂直抗力を使用
-            f_n.max(mass * gravity_mag)
+        // 接触中の法線力を使って摩擦上限を計算
+        let normal_force = if floor_overlap >= -SUPPORT_EPS {
+            floor_normal_force.max(mass * gravity_mag)
         } else {
-            // overlap=0（床にちょうど乗っている）場合、垂直抗力=mg
-            mass * gravity_mag
+            floor_normal_force
         };
 
         let contact_point = Vec3::new(0.0, -radius, 0.0);
@@ -193,59 +215,43 @@ pub fn compute_wall_contact_force(
         force.z -= f_n;
     }
 
-    // 仕切り壁との接触
+    // 仕切りとの接触（壁よりソフトな制約）
     let divider_top = floor_y + container.divider_height;
 
     // 仕切りより下にいる場合のみ接触チェック
     if pos.y - radius < divider_top {
         let half_thickness = container.divider_thickness / 2.0;
+        let dist_from_center = pos.x.abs();
+        let dist_to_face = dist_from_center - half_thickness;
+        let raw_overlap = radius - dist_to_face;
 
-        // 粒子の左端と右端のX座標
-        let particle_left = pos.x - radius;
-        let particle_right = pos.x + radius;
-
-        // 仕切りの範囲: -half_thickness から +half_thickness
-        // 粒子が仕切りと重なっているかチェック
-        if particle_left < half_thickness && particle_right > -half_thickness {
-            // 仕切りと重なっている
-            // どちら側から押し出すかを決定（粒子中心の位置に基づく）
-            if pos.x >= 0.0 {
-                // 右側に押し出す
-                let overlap = half_thickness - particle_left;
-                if overlap > 0.0 {
-                    // 法線速度（負=接近=左向き、正=離反=右向き）
-                    let v_n = vel.x;
-                    let f_n = compute_wall_normal_force(overlap, v_n, radius, mass, wall_props);
-                    force.x += f_n;
-
-                    // 接線摩擦（Y-Z平面）
-                    if f_n > 0.0 {
-                        let v_t = Vec3::new(0.0, vel.y, vel.z);
-                        if v_t.length() > 1e-6 {
-                            let f_t = (wall_props.friction * f_n)
-                                .min(v_t.length() * wall_props.damping * 0.5);
-                            force -= f_t * v_t.normalize();
-                        }
-                    }
-                }
+        if raw_overlap > 0.0 {
+            // 深いめり込みでも強い押し出しになりすぎないよう制限
+            let max_overlap = radius * 0.25;
+            let overlap = raw_overlap.min(max_overlap);
+            // x=0 付近では速度方向を優先して法線を決め、左右対称性を保つ
+            let sign = if dist_from_center > 1e-8 {
+                pos.x.signum()
+            } else if vel.x.abs() > 1e-8 {
+                -vel.x.signum()
             } else {
-                // 左側に押し出す
-                let overlap = particle_right - (-half_thickness);
-                if overlap > 0.0 {
-                    // 法線速度（負=接近=右向き、正=離反=左向き）
-                    let v_n = -vel.x;
-                    let f_n = compute_wall_normal_force(overlap, v_n, radius, mass, wall_props);
-                    force.x -= f_n;
+                divider_tiebreak_sign(pos)
+            };
+            let v_n = sign * vel.x;
 
-                    // 接線摩擦（Y-Z平面）
-                    if f_n > 0.0 {
-                        let v_t = Vec3::new(0.0, vel.y, vel.z);
-                        if v_t.length() > 1e-6 {
-                            let f_t = (wall_props.friction * f_n)
-                                .min(v_t.length() * wall_props.damping * 0.5);
-                            force -= f_t * v_t.normalize();
-                        }
-                    }
+            // 仕切りは壁よりソフトに扱う
+            const DIVIDER_FORCE_SCALE: f32 = 0.35;
+            let f_n = DIVIDER_FORCE_SCALE
+                * compute_wall_normal_force(overlap, v_n, radius, mass, wall_props);
+            force.x += sign * f_n;
+
+            // 接線摩擦（Y-Z平面）も弱める
+            if f_n > 0.0 {
+                let v_t = Vec3::new(0.0, vel.y, vel.z);
+                if v_t.length() > 1e-6 {
+                    let f_t_max = wall_props.friction * 0.5 * f_n;
+                    let f_t = f_t_max.min(v_t.length() * wall_props.damping * 0.25);
+                    force -= f_t * v_t.normalize();
                 }
             }
         }

@@ -97,7 +97,6 @@ impl SpatialHashGrid {
         self.buckets[hash].lock().push(index);
     }
 
-    #[allow(dead_code)]
     pub fn neighbor_offsets() -> &'static [(i32, i32, i32); 27] {
         static OFFSETS: [(i32, i32, i32); 27] = [
             (-1, -1, -1),

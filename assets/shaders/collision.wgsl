@@ -19,18 +19,207 @@ struct ContactResult {
 
 fn hash_cell(cell: vec3<i32>) -> u32 {
     let dim = i32(params.grid_dim);
+    let half = dim / 2;
+    let shifted = cell + vec3<i32>(half, half, half);
     let c = vec3<i32>(
-        clamp(cell.x, 0, dim - 1),
-        clamp(cell.y, 0, dim - 1),
-        clamp(cell.z, 0, dim - 1)
+        clamp(shifted.x, 0, dim - 1),
+        clamp(shifted.y, 0, dim - 1),
+        clamp(shifted.z, 0, dim - 1)
     );
     return u32((c.z * dim + c.y) * dim + c.x);
 }
 
 fn get_cell(pos: vec3<f32>) -> vec3<i32> {
-    let world_half = vec3<f32>(params.container_half_x, params.container_half_y, params.container_half_z);
-    let normalized_pos = (pos + world_half) / params.cell_size;
-    return vec3<i32>(floor(normalized_pos));
+    // CPU と同じ原点基準セル座標
+    return vec3<i32>(floor(pos / params.cell_size));
+}
+
+fn compute_wall_normal_force(overlap_in: f32, v_n: f32, radius: f32, mass_inv: f32) -> f32 {
+    if (overlap_in <= 0.0) {
+        return 0.0;
+    }
+
+    let overlap = min(overlap_in, radius);
+    let stiffness = params.wall_stiffness;
+    let mass = 1.0 / mass_inv;
+
+    let f_spring = stiffness * overlap;
+    let ln_e = log(max(params.wall_restitution, 0.01));
+    let damping_ratio = -ln_e / sqrt(3.14159265 * 3.14159265 + ln_e * ln_e);
+    let c_crit = 2.0 * sqrt(stiffness * mass);
+    let damping_coeff = damping_ratio * c_crit;
+
+    var f_damp = 0.0;
+    if (v_n < 0.0) {
+        f_damp = -damping_coeff * v_n;
+    }
+
+    return max(f_spring + f_damp, 0.0);
+}
+
+// 仕切り中心で法線方向が決められない場合のタイブレーク（CPU実装と同じ式）。
+fn divider_tiebreak_sign(pos: vec3<f32>) -> f32 {
+    let qy = i32(floor(pos.y * 1024.0));
+    let qz = i32(floor(pos.z * 1024.0));
+    let seed = (bitcast<u32>(qy) * 0x9E3779B1u)
+        ^ (bitcast<u32>(qz) * 0x85EBCA6Bu)
+        ^ 0xC2B2AE35u;
+    return select(-1.0, 1.0, (seed & 1u) == 1u);
+}
+
+fn compute_wall_contact(p: Particle) -> ContactResult {
+    var result: ContactResult;
+    result.force = vec3<f32>(0.0);
+    result.torque = vec3<f32>(0.0);
+
+    let box_min = vec3<f32>(
+        -params.container_half_x,
+        -params.container_half_y + params.container_offset,
+        -params.container_half_z,
+    );
+    let box_max = vec3<f32>(
+        params.container_half_x,
+        params.container_half_y + params.container_offset,
+        params.container_half_z,
+    );
+
+    // 床
+    let floor_y = box_min.y;
+    let floor_overlap = floor_y + p.radius - p.pos.y;
+    let contact_threshold = 0.001;
+    let is_floor_contact = floor_overlap > -contact_threshold;
+    let mass = 1.0 / p.mass_inv;
+
+    if (is_floor_contact) {
+        let effective_overlap = max(floor_overlap, 0.0);
+        let gravity_mag = 9.81;
+        var floor_normal_force = 0.0;
+
+        if (effective_overlap > 0.0) {
+            let f_n = compute_wall_normal_force(effective_overlap, p.vel.y, p.radius, p.mass_inv);
+            floor_normal_force += f_n;
+            result.force.y += f_n;
+        }
+
+        if (p.vel.y < 0.0 && p.vel.y > -0.01) {
+            let damping_force = -p.vel.y * mass * 100.0;
+            floor_normal_force += damping_force;
+            result.force.y += damping_force;
+        }
+
+        let support_eps = 1e-6;
+        if (floor_overlap >= -support_eps && p.vel.y <= 0.0) {
+            let support_force = max(mass * gravity_mag - floor_normal_force, 0.0);
+            if (support_force > 0.0) {
+                floor_normal_force += support_force;
+                result.force.y += support_force;
+            }
+        }
+
+        var normal_force = floor_normal_force;
+        if (floor_overlap >= -support_eps) {
+            normal_force = max(normal_force, mass * gravity_mag);
+        }
+
+        let contact_point = vec3<f32>(0.0, -p.radius, 0.0);
+        let v_t = vec3<f32>(p.vel.x, 0.0, p.vel.z) + cross(p.omega, contact_point);
+        let v_t_mag = length(v_t);
+        if (v_t_mag > 1e-8) {
+            let f_t_max = params.wall_friction * normal_force;
+            let viscous_friction = v_t_mag * params.wall_damping * 2.0;
+            let stick_friction = f_t_max * 0.1;
+            let f_t = min(f_t_max, viscous_friction + stick_friction);
+            let friction_force = -f_t * (v_t / v_t_mag);
+            result.force += friction_force;
+            result.torque += cross(contact_point, friction_force);
+        }
+    }
+
+    // 天井
+    let ceiling_overlap = p.pos.y + p.radius - box_max.y;
+    if (ceiling_overlap > 0.0) {
+        let f_n = compute_wall_normal_force(ceiling_overlap, -p.vel.y, p.radius, p.mass_inv);
+        result.force.y -= f_n;
+    }
+
+    // 左壁 (-X)
+    let left_overlap = box_min.x + p.radius - p.pos.x;
+    if (left_overlap > 0.0) {
+        let f_n = compute_wall_normal_force(left_overlap, p.vel.x, p.radius, p.mass_inv);
+        result.force.x += f_n;
+    }
+
+    // 右壁 (+X)
+    let right_overlap = p.pos.x + p.radius - box_max.x;
+    if (right_overlap > 0.0) {
+        let f_n = compute_wall_normal_force(right_overlap, -p.vel.x, p.radius, p.mass_inv);
+        result.force.x -= f_n;
+    }
+
+    // 前壁 (-Z)
+    let front_overlap = box_min.z + p.radius - p.pos.z;
+    if (front_overlap > 0.0) {
+        let f_n = compute_wall_normal_force(front_overlap, p.vel.z, p.radius, p.mass_inv);
+        result.force.z += f_n;
+    }
+
+    // 後壁 (+Z)
+    let back_overlap = p.pos.z + p.radius - box_max.z;
+    if (back_overlap > 0.0) {
+        let f_n = compute_wall_normal_force(back_overlap, -p.vel.z, p.radius, p.mass_inv);
+        result.force.z -= f_n;
+    }
+
+    // 仕切りとの接触（壁よりソフトな制約）
+    let divider_top = floor_y + params.divider_height;
+    if (p.pos.y - p.radius < divider_top) {
+        let half_thickness = params.divider_thickness * 0.5;
+        let dist_from_center = abs(p.pos.x);
+        let dist_to_face = dist_from_center - half_thickness;
+        let raw_overlap = p.radius - dist_to_face;
+
+        if (raw_overlap > 0.0) {
+            // 深いめり込みでも強い押し出しになりすぎないよう制限
+            let max_overlap = p.radius * 0.25;
+            let overlap = min(raw_overlap, max_overlap);
+
+            // x=0 付近では速度方向を優先して法線を決め、左右対称性を保つ
+            var sign = 1.0;
+            if (dist_from_center > 1e-8) {
+                sign = select(-1.0, 1.0, p.pos.x > 0.0);
+            } else if (abs(p.vel.x) > 1e-8) {
+                sign = select(1.0, -1.0, p.vel.x > 0.0);
+            } else {
+                sign = divider_tiebreak_sign(p.pos);
+            }
+
+            let v_n = sign * p.vel.x;
+            let divider_force_scale = 0.35;
+            let f_n = divider_force_scale
+                * compute_wall_normal_force(overlap, v_n, p.radius, p.mass_inv);
+            result.force.x += sign * f_n;
+
+            // 接線摩擦（Y-Z平面）も弱める
+            if (f_n > 0.0) {
+                let v_t = vec3<f32>(0.0, p.vel.y, p.vel.z);
+                let v_t_mag = length(v_t);
+                if (v_t_mag > 1e-6) {
+                    let f_t_max = params.wall_friction * 0.5 * f_n;
+                    let f_t = min(f_t_max, v_t_mag * params.wall_damping * 0.25);
+                    result.force -= f_t * (v_t / v_t_mag);
+                }
+            }
+        }
+    }
+
+    if (any(result.force != result.force)) {
+        result.force = vec3<f32>(0.0);
+    }
+    if (any(result.torque != result.torque)) {
+        result.torque = vec3<f32>(0.0);
+    }
+
+    return result;
 }
 
 fn compute_contact(p: Particle, q: Particle) -> ContactResult {
@@ -42,11 +231,15 @@ fn compute_contact(p: Particle, q: Particle) -> ContactResult {
     let dist_sq = dot(delta, delta);
     let r_sum = p.radius + q.radius;
 
-    if (dist_sq >= r_sum * r_sum || dist_sq < 1e-10) {
+    if (dist_sq >= r_sum * r_sum) {
         return result;
     }
 
     let dist = sqrt(dist_sq);
+    if (dist < 1e-10) {
+        return result;
+    }
+
     var overlap = r_sum - dist;
 
     // sqrt の浮動小数点精度により overlap が負になるケースをガード
@@ -80,7 +273,9 @@ fn compute_contact(p: Particle, q: Particle) -> ContactResult {
     var f_n_damping = 0.0;
     if (v_n < 0.0) {
         let m_eff = 1.0 / (p.mass_inv + q.mass_inv);
-        let beta = -log(params.restitution) / sqrt(3.14159265 * 3.14159265 + log(params.restitution) * log(params.restitution));
+        let restitution = max(params.restitution, 0.01);
+        let log_e = log(restitution);
+        let beta = -log_e / sqrt(3.14159265 * 3.14159265 + log_e * log_e);
         f_n_damping = 2.0 * beta * sqrt(k_n * m_eff) * (-v_n);
     }
 
@@ -128,6 +323,21 @@ fn compute_contact(p: Particle, q: Particle) -> ContactResult {
 
     result.force = f_n_total * n + f_t;
     result.torque = torque;
+
+    // CPU 実装と同様に接触力・トルクをクランプして数値暴走を防ぐ
+    let max_accel = 1000.0;
+    let max_force = max_accel / p.mass_inv;
+    let force_mag = length(result.force);
+    if (force_mag > max_force && force_mag > 1e-10) {
+        result.force *= max_force / force_mag;
+    }
+
+    let max_torque = max_force * p.radius;
+    let torque_mag = length(result.torque);
+    if (torque_mag > max_torque && torque_mag > 1e-10) {
+        result.torque *= max_torque / torque_mag;
+    }
+
     return result;
 }
 
@@ -151,6 +361,9 @@ fn collision_response(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let cell = get_cell(p.pos);
     let dim = i32(params.grid_dim);
+    let half = dim / 2;
+    let min_cell = -half;
+    let max_cell = min_cell + dim;
 
     // 27セル近傍探索
     for (var dz: i32 = -1; dz <= 1; dz++) {
@@ -159,16 +372,29 @@ fn collision_response(@builtin(global_invocation_id) gid: vec3<u32>) {
                 let nc = cell + vec3<i32>(dx, dy, dz);
 
                 // 範囲外チェック
-                if (nc.x < 0 || nc.x >= dim || nc.y < 0 || nc.y >= dim || nc.z < 0 || nc.z >= dim) {
+                if (
+                    nc.x < min_cell || nc.x >= max_cell ||
+                    nc.y < min_cell || nc.y >= max_cell ||
+                    nc.z < min_cell || nc.z >= max_cell
+                ) {
                     continue;
                 }
 
                 let cell_key = hash_cell(nc);
                 let range = cell_ranges[cell_key];
+                let start = min(range.x, params.num_particles);
+                let end = min(range.y, params.num_particles);
+                if (end <= start) {
+                    continue;
+                }
 
-                for (var j: u32 = range.x; j < range.y; j++) {
+                for (var j: u32 = start; j < end; j++) {
+                    // セル範囲が壊れた場合でも他セル粒子を誤加算しないようキー一致を確認
+                    if (keys[j] != cell_key) {
+                        continue;
+                    }
                     let other_id = particle_ids[j];
-                    if (other_id == id) {
+                    if (other_id >= params.num_particles || other_id == id) {
                         continue;
                     }
 
@@ -181,14 +407,22 @@ fn collision_response(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
     }
 
-    // NaN ガード: 結果が NaN なら力・トルクをゼロに
-    if (any(total_force != total_force)) {
+    // CPU 実装に合わせて、粒子間力の加算後に壁接触力を加算する。
+    let wall = compute_wall_contact(p);
+    total_force += wall.force;
+    total_torque += wall.torque;
+
+    // 非有限値ガード（isFinite の実装差を避けるため NaN/巨大値で判定）
+    let invalid_force = any(total_force != total_force) || any(abs(total_force) > vec3<f32>(1e30));
+    if (invalid_force) {
         forces[id] = vec4<f32>(0.0);
     } else {
         forces[id] = vec4<f32>(total_force, 0.0);
     }
 
-    if (any(total_torque != total_torque)) {
+    let invalid_torque =
+        any(total_torque != total_torque) || any(abs(total_torque) > vec3<f32>(1e30));
+    if (invalid_torque) {
         torques[id] = vec4<f32>(0.0);
     } else {
         torques[id] = vec4<f32>(total_torque, 0.0);

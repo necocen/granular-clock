@@ -1,4 +1,3 @@
-
 use bevy::prelude::*;
 
 use crate::physics::collision::{compute_wall_contact_force, WallProperties};
@@ -796,8 +795,9 @@ fn test_single_particle_energy_decay() {
     let inertia = (2.0 / 5.0) * mass * radius.powi(2);
 
     // Start particle above floor with some horizontal velocity
+    // Divider 干渉を避けるため、x を中心線から離す
     let floor_y = container.base_position.y - container.half_extents.y;
-    let mut pos = Vec3::new(0.0, floor_y + radius + 0.1, 0.0); // 10cm above floor
+    let mut pos = Vec3::new(0.1, floor_y + radius + 0.1, 0.0); // 10cm above floor
     let mut vel = Vec3::new(0.5, 0.0, 0.5); // Some horizontal velocity
     let mut omega = Vec3::ZERO;
 
@@ -893,6 +893,16 @@ fn test_single_particle_energy_decay() {
 
     // Check velocity is small (particle should be settling)
     println!("\nVelocity at end: {:.6} m/s", vel.length());
+    assert!(
+        vel.length() < 0.01,
+        "Particle should settle close to rest, but final speed was {:.6} m/s",
+        vel.length()
+    );
+    assert!(
+        vel.y.abs() < 0.01,
+        "Vertical residual velocity should be near zero, but was {:.6} m/s",
+        vel.y
+    );
 }
 
 /// Test energy dissipation with multiple particles colliding
@@ -1773,6 +1783,65 @@ fn test_divider_collision() {
             (final_ke / initial_ke - 1.0) * 100.0
         );
     }
+}
+
+/// 仕切り接触は左右対称で、過度に強い拘束にならないことを確認
+#[test]
+fn test_divider_symmetry_and_soft_constraint() {
+    let container = Container::default();
+    let wall_props = WallProperties::default();
+    let radius = 0.02f32;
+    let mass = 0.084f32;
+    let omega = Vec3::ZERO;
+    let floor_y = container.base_position.y - container.half_extents.y;
+    let y = floor_y + 0.05; // 仕切り高さより下
+
+    // 左右ミラーで同等な大きさ・逆向きの力になること
+    let r = compute_wall_contact_force(
+        Vec3::new(0.004, y, 0.0),
+        Vec3::new(-0.2, 0.0, 0.0),
+        omega,
+        radius,
+        mass,
+        &container,
+        &wall_props,
+    );
+    let l = compute_wall_contact_force(
+        Vec3::new(-0.004, y, 0.0),
+        Vec3::new(0.2, 0.0, 0.0),
+        omega,
+        radius,
+        mass,
+        &container,
+        &wall_props,
+    );
+
+    assert!(r.force.x > 0.0, "Right-side contact should push +X");
+    assert!(l.force.x < 0.0, "Left-side contact should push -X");
+    let mag_diff = (r.force.x.abs() - l.force.x.abs()).abs();
+    let mag_ref = r.force.x.abs().max(l.force.x.abs()).max(1e-3);
+    assert!(
+        mag_diff / mag_ref < 0.1,
+        "Divider force should be approximately symmetric: right={}, left={}",
+        r.force.x,
+        l.force.x
+    );
+
+    // 中央めり込み時でも過度な強制力で跳ね飛ばさないこと
+    let center = compute_wall_contact_force(
+        Vec3::new(0.0, y, 0.0),
+        Vec3::ZERO,
+        omega,
+        radius,
+        mass,
+        &container,
+        &wall_props,
+    );
+    assert!(
+        center.force.x.abs() < 30.0,
+        "Divider should be softer than rigid wall, got force.x={}",
+        center.force.x
+    );
 }
 
 /// Test damping coefficient calculation

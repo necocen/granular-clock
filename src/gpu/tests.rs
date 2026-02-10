@@ -1,6 +1,14 @@
 //! GPU 物理のユニットテスト
 
 use crate::gpu::buffers::{ParticleGpu, SimulationParams};
+use bevy::prelude::Vec3;
+use std::collections::HashMap;
+
+use crate::physics::{
+    clamp_to_container, clamp_velocity, compute_particle_contact_force, compute_wall_contact_force,
+    integrate_first_half, integrate_second_half, ContactState, MaterialProperties, WallProperties,
+};
+use crate::simulation::Container;
 
 #[test]
 fn test_particle_gpu_size_and_alignment() {
@@ -20,12 +28,11 @@ fn test_particle_gpu_size_and_alignment() {
 
 #[test]
 fn test_simulation_params_size() {
-    // SimulationParams は 80 バイト
-    // WGSL: vec3<f32> は 12 バイトだが、その後に u32 が続くので 28 からスタート可能
+    // SimulationParams は 96 バイト
     assert_eq!(
         std::mem::size_of::<SimulationParams>(),
-        80,
-        "SimulationParams should be 80 bytes"
+        96,
+        "SimulationParams should be 96 bytes"
     );
 }
 
@@ -70,11 +77,15 @@ fn test_simulation_params_field_offsets() {
     assert_eq!(offset_of!(SimulationParams, container_half_x), 56);
     assert_eq!(offset_of!(SimulationParams, container_half_y), 60);
 
-    // 64-80: container_half_z, divider_thickness, rolling_friction, _pad
+    // 64-80: container_half_z, divider_thickness, rolling_friction, wall_restitution
     assert_eq!(offset_of!(SimulationParams, container_half_z), 64);
     assert_eq!(offset_of!(SimulationParams, divider_thickness), 68);
     assert_eq!(offset_of!(SimulationParams, rolling_friction), 72);
-    assert_eq!(offset_of!(SimulationParams, _pad), 76);
+    assert_eq!(offset_of!(SimulationParams, wall_restitution), 76);
+    assert_eq!(offset_of!(SimulationParams, wall_friction), 80);
+    assert_eq!(offset_of!(SimulationParams, wall_damping), 84);
+    assert_eq!(offset_of!(SimulationParams, wall_stiffness), 88);
+    assert_eq!(offset_of!(SimulationParams, _pad_end), 92);
 }
 
 #[test]
@@ -367,11 +378,14 @@ fn gpu_compute_contact_force(
     let dist_sq = delta[0] * delta[0] + delta[1] * delta[1] + delta[2] * delta[2];
     let r_sum = radius_p + radius_q;
 
-    if dist_sq >= r_sum * r_sum || dist_sq < 1e-10 {
+    if dist_sq >= r_sum * r_sum {
         return [0.0, 0.0, 0.0];
     }
 
     let dist = dist_sq.sqrt();
+    if dist < 1e-10 {
+        return [0.0, 0.0, 0.0];
+    }
     let mut overlap = r_sum - dist;
 
     if overlap <= 0.0 {
@@ -1098,4 +1112,2375 @@ fn test_readback_buffer_thread_safety() {
 
     let frame = readback.frame.read().unwrap();
     assert_eq!(*frame, 42);
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn inject_shared_types(shader_src: &str) -> String {
+    let types_src = include_str!("../../assets/shaders/physics_types.wgsl")
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("#define_import_path"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    shader_src.replace(
+        "#import granular_clock::physics_types::{Particle, Params}",
+        &types_src,
+    )
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn run_neighbor_search(
+    encoder: &mut wgpu::CommandEncoder,
+    bind_group: &wgpu::BindGroup,
+    hash_pipeline: &wgpu::ComputePipeline,
+    cell_pipeline: &wgpu::ComputePipeline,
+    cell_ranges: &wgpu::Buffer,
+    forces: &wgpu::Buffer,
+    torques: &wgpu::Buffer,
+) {
+    encoder.clear_buffer(cell_ranges, 0, None);
+    encoder.clear_buffer(forces, 0, None);
+    encoder.clear_buffer(torques, 0, None);
+
+    {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("gpu_test_hash"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(hash_pipeline);
+        pass.set_bind_group(0, bind_group, &[]);
+        pass.dispatch_workgroups(1, 1, 1);
+    }
+
+    {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("gpu_test_cell_ranges"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(cell_pipeline);
+        pass.set_bind_group(0, bind_group, &[]);
+        pass.dispatch_workgroups(1, 1, 1);
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn run_neighbor_search_with_sort(
+    encoder: &mut wgpu::CommandEncoder,
+    bind_group: &wgpu::BindGroup,
+    hash_pipeline: &wgpu::ComputePipeline,
+    bitonic_sort_pipeline: &wgpu::ComputePipeline,
+    cell_pipeline: &wgpu::ComputePipeline,
+    cell_ranges: &wgpu::Buffer,
+    forces: &wgpu::Buffer,
+    torques: &wgpu::Buffer,
+    num_particles: u32,
+    sort_count: u32,
+) {
+    encoder.clear_buffer(cell_ranges, 0, None);
+    encoder.clear_buffer(forces, 0, None);
+    encoder.clear_buffer(torques, 0, None);
+
+    let workgroups_sort_64 = sort_count.div_ceil(64);
+    let workgroups_sort_256 = sort_count.div_ceil(256);
+    let workgroups_particles_64 = num_particles.div_ceil(64);
+
+    {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("gpu_test_hash_sorted"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(hash_pipeline);
+        pass.set_bind_group(0, bind_group, &[]);
+        pass.dispatch_workgroups(workgroups_sort_64, 1, 1);
+    }
+
+    {
+        let mut k = 2u32;
+        while k <= sort_count {
+            let mut j = k / 2;
+            while j > 0 {
+                let push_constants = [j, k, sort_count];
+                let push_constant_bytes = bytemuck::bytes_of(&push_constants);
+
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("gpu_test_bitonic_sort"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(bitonic_sort_pipeline);
+                pass.set_bind_group(0, bind_group, &[]);
+                pass.set_push_constants(0, push_constant_bytes);
+                pass.dispatch_workgroups(workgroups_sort_256, 1, 1);
+                j /= 2;
+            }
+            k *= 2;
+        }
+    }
+
+    {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("gpu_test_cell_ranges_sorted"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(cell_pipeline);
+        pass.set_bind_group(0, bind_group, &[]);
+        pass.dispatch_workgroups(workgroups_particles_64, 1, 1);
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn run_collision(
+    encoder: &mut wgpu::CommandEncoder,
+    bind_group: &wgpu::BindGroup,
+    collision_pipeline: &wgpu::ComputePipeline,
+    num_particles: u32,
+) {
+    {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("gpu_test_collision"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(collision_pipeline);
+        pass.set_bind_group(0, bind_group, &[]);
+        pass.dispatch_workgroups(num_particles.div_ceil(64), 1, 1);
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn run_integrate(
+    encoder: &mut wgpu::CommandEncoder,
+    bind_group: &wgpu::BindGroup,
+    integrate_pipeline: &wgpu::ComputePipeline,
+    num_particles: u32,
+) {
+    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+        label: Some("gpu_test_integrate"),
+        timestamp_writes: None,
+    });
+    pass.set_pipeline(integrate_pipeline);
+    pass.set_bind_group(0, bind_group, &[]);
+    pass.dispatch_workgroups(num_particles.div_ceil(64), 1, 1);
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn map_read_buffer_blocking(
+    device: &wgpu::Device,
+    buffer: &wgpu::Buffer,
+) -> Result<Vec<ParticleGpu>, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let slice = buffer.slice(..);
+    slice.map_async(wgpu::MapMode::Read, move |res| {
+        let _ = tx.send(res);
+    });
+
+    let _ = device.poll(wgpu::PollType::wait_indefinitely());
+    match rx.recv() {
+        Ok(Ok(())) => {
+            let mapped = slice.get_mapped_range();
+            let result = bytemuck::cast_slice(&mapped).to_vec();
+            drop(mapped);
+            buffer.unmap();
+            Ok(result)
+        }
+        Ok(Err(e)) => Err(format!("map_async failed: {e:?}")),
+        Err(e) => Err(format!("map_async channel failed: {e}")),
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[test]
+#[ignore = "requires native GPU adapter/device and runs real compute passes"]
+fn test_gpu_e2e_matches_cpu_single_particle() {
+    use crate::physics::{
+        clamp_to_container, clamp_velocity, compute_wall_contact_force, integrate_first_half,
+        integrate_second_half,
+    };
+    use crate::simulation::Container;
+    use std::borrow::Cow;
+    use std::f32::consts::PI;
+
+    pollster::block_on(async {
+        let instance = wgpu::Instance::default();
+        let strict_gpu = std::env::var_os("STRICT_GPU_TEST").is_some();
+        let adapter = match instance
+            .request_adapter(&wgpu::RequestAdapterOptions::default())
+            .await
+        {
+            Ok(adapter) => adapter,
+            Err(err) => {
+                if strict_gpu {
+                    panic!("No GPU adapter available for ignored GPU E2E test: {err:?}");
+                }
+                eprintln!("Skipping GPU E2E test (no adapter): {err:?}");
+                return;
+            }
+        };
+
+        let (device, queue) = match adapter
+            .request_device(&wgpu::DeviceDescriptor::default())
+            .await
+        {
+            Ok(pair) => pair,
+            Err(err) => {
+                if strict_gpu {
+                    panic!("Failed to create GPU device for ignored GPU E2E test: {err:?}");
+                }
+                eprintln!("Skipping GPU E2E test (device creation failed): {err:?}");
+                return;
+            }
+        };
+
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("gpu_test_bind_group_layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("gpu_test_pipeline_layout"),
+            bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let hash_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("gpu_test_hash_keys"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Owned(inject_shared_types(include_str!(
+                "../../assets/shaders/hash_keys.wgsl"
+            )))),
+        });
+        let cell_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("gpu_test_cell_ranges"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Owned(inject_shared_types(include_str!(
+                "../../assets/shaders/cell_ranges.wgsl"
+            )))),
+        });
+        let collision_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("gpu_test_collision"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Owned(inject_shared_types(include_str!(
+                "../../assets/shaders/collision.wgsl"
+            )))),
+        });
+        let integrate_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("gpu_test_integrate"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Owned(inject_shared_types(include_str!(
+                "../../assets/shaders/integrate.wgsl"
+            )))),
+        });
+
+        let hash_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("gpu_test_hash_pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &hash_shader,
+            entry_point: Some("build_keys"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        let cell_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("gpu_test_cell_pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &cell_shader,
+            entry_point: Some("build_cell_ranges"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        let collision_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("gpu_test_collision_pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &collision_shader,
+            entry_point: Some("collision_response"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        let integrate_first_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("gpu_test_integrate_first"),
+                layout: Some(&pipeline_layout),
+                module: &integrate_shader,
+                entry_point: Some("integrate_first_half"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+        let integrate_second_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("gpu_test_integrate_second"),
+                layout: Some(&pipeline_layout),
+                module: &integrate_shader,
+                entry_point: Some("integrate_second_half"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+
+        let container = Container::default();
+        let dt = 1.0 / 5000.0;
+        let density = 5000.0;
+        let radius: f32 = 0.01;
+        let volume = (4.0 / 3.0) * PI * radius.powi(3);
+        let mass = density * volume;
+        let inertia = (2.0 / 5.0) * mass * radius.powi(2);
+        let mass_inv = 1.0 / mass;
+        let inertia_inv = 1.0 / inertia;
+        let num_particles = 1u32;
+        let grid_dim = 16u32;
+        let num_cells = grid_dim * grid_dim * grid_dim;
+
+        let initial_particle = ParticleGpu {
+            pos: [0.02, container.floor_y() + radius + 0.015, 0.0],
+            radius,
+            vel: [0.4, -0.2, 0.1],
+            mass_inv,
+            omega: [0.0; 3],
+            inertia_inv,
+            size_flag: 0,
+            _pad: [0; 3],
+        };
+
+        let params = SimulationParams {
+            dt,
+            gravity: -9.81,
+            cell_size: 0.03,
+            grid_dim,
+            world_half: [
+                container.half_extents.x,
+                container.half_extents.y,
+                container.half_extents.z,
+            ],
+            num_particles,
+            youngs_modulus: 5e6,
+            poisson_ratio: 0.25,
+            restitution: 0.3,
+            friction: 0.5,
+            container_offset: container.base_position.y + container.current_offset,
+            divider_height: container.divider_height,
+            container_half_x: container.half_extents.x,
+            container_half_y: container.half_extents.y,
+            container_half_z: container.half_extents.z,
+            divider_thickness: container.divider_thickness,
+            rolling_friction: 0.1,
+            wall_restitution: 0.3,
+            wall_friction: 0.4,
+            wall_damping: 20.0,
+            wall_stiffness: 10000.0,
+            _pad_end: 0.0,
+        };
+
+        let particle_bytes = bytemuck::bytes_of(&initial_particle);
+        let particles_in = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_test_particles_in"),
+            size: std::mem::size_of::<ParticleGpu>() as u64,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let particles_out = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_test_particles_out"),
+            size: std::mem::size_of::<ParticleGpu>() as u64,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&particles_in, 0, particle_bytes);
+        queue.write_buffer(&particles_out, 0, particle_bytes);
+
+        let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_test_params"),
+            size: std::mem::size_of::<SimulationParams>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&params_buffer, 0, bytemuck::bytes_of(&params));
+
+        let keys = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_test_keys"),
+            size: 4,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let particle_ids = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_test_particle_ids"),
+            size: 4,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let cell_ranges = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_test_cell_ranges"),
+            size: std::mem::size_of::<crate::gpu::buffers::CellRange>() as u64 * num_cells as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let forces = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_test_forces"),
+            size: 16,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let torques = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_test_torques"),
+            size: 16,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let bind_group_forward = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("gpu_test_bind_group_forward"),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: particles_in.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: particles_out.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: keys.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: particle_ids.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: cell_ranges.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: forces.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: torques.as_entire_binding(),
+                },
+            ],
+        });
+
+        let bind_group_reverse = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("gpu_test_bind_group_reverse"),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: particles_out.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: particles_in.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: keys.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: particle_ids.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: cell_ranges.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: forces.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: torques.as_entire_binding(),
+                },
+            ],
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("gpu_test_encoder"),
+        });
+
+        let substeps = 100u32;
+        for _ in 0..substeps {
+            run_neighbor_search(
+                &mut encoder,
+                &bind_group_forward,
+                &hash_pipeline,
+                &cell_pipeline,
+                &cell_ranges,
+                &forces,
+                &torques,
+            );
+            run_collision(
+                &mut encoder,
+                &bind_group_forward,
+                &collision_pipeline,
+                num_particles,
+            );
+            run_integrate(
+                &mut encoder,
+                &bind_group_forward,
+                &integrate_first_pipeline,
+                num_particles,
+            );
+
+            // 後半
+            run_neighbor_search(
+                &mut encoder,
+                &bind_group_reverse,
+                &hash_pipeline,
+                &cell_pipeline,
+                &cell_ranges,
+                &forces,
+                &torques,
+            );
+            run_collision(
+                &mut encoder,
+                &bind_group_reverse,
+                &collision_pipeline,
+                num_particles,
+            );
+            run_integrate(
+                &mut encoder,
+                &bind_group_reverse,
+                &integrate_second_pipeline,
+                num_particles,
+            );
+        }
+
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_test_readback"),
+            size: std::mem::size_of::<ParticleGpu>() as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        encoder.copy_buffer_to_buffer(
+            &particles_in,
+            0,
+            &readback,
+            0,
+            std::mem::size_of::<ParticleGpu>() as u64,
+        );
+
+        queue.submit([encoder.finish()]);
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+
+        let gpu_particles = map_read_buffer_blocking(&device, &readback)
+            .expect("GPU readback failed in ignored E2E test");
+        let gpu = gpu_particles[0];
+
+        let mut cpu_pos = Vec3::from_array(initial_particle.pos);
+        let mut cpu_vel = Vec3::from_array(initial_particle.vel);
+        let mut cpu_omega = Vec3::from_array(initial_particle.omega);
+        let box_offset = Vec3::Y * container.current_offset;
+        let box_min = container.base_position - container.half_extents + box_offset;
+        let box_max = container.base_position + container.half_extents + box_offset;
+        let gravity = Vec3::new(0.0, -9.81, 0.0);
+
+        for _ in 0..substeps {
+            let wall1 = compute_wall_contact_force(
+                cpu_pos,
+                cpu_vel,
+                cpu_omega,
+                radius,
+                mass,
+                &container,
+                &crate::physics::WallProperties::default(),
+            );
+            integrate_first_half(
+                &mut cpu_pos,
+                &mut cpu_vel,
+                &mut cpu_omega,
+                wall1.force,
+                wall1.torque,
+                mass,
+                inertia,
+                gravity,
+                dt,
+            );
+            clamp_to_container(&mut cpu_pos, &mut cpu_vel, radius, box_min, box_max);
+            clamp_velocity(&mut cpu_vel, &mut cpu_omega, 10.0, 100.0);
+
+            let wall2 = compute_wall_contact_force(
+                cpu_pos,
+                cpu_vel,
+                cpu_omega,
+                radius,
+                mass,
+                &container,
+                &crate::physics::WallProperties::default(),
+            );
+            integrate_second_half(
+                &mut cpu_vel,
+                &mut cpu_omega,
+                wall2.force,
+                wall2.torque,
+                mass,
+                inertia,
+                gravity,
+                dt,
+            );
+            clamp_to_container(&mut cpu_pos, &mut cpu_vel, radius, box_min, box_max);
+            clamp_velocity(&mut cpu_vel, &mut cpu_omega, 10.0, 100.0);
+        }
+
+        let gpu_pos = Vec3::from_array(gpu.pos);
+        let gpu_vel = Vec3::from_array(gpu.vel);
+        let pos_diff = (cpu_pos - gpu_pos).length();
+        let vel_diff = (cpu_vel - gpu_vel).length();
+
+        assert!(
+            pos_diff < 1e-3,
+            "GPU E2E position mismatch too large: {pos_diff}, cpu={cpu_pos:?}, gpu={gpu_pos:?}"
+        );
+        assert!(
+            vel_diff < 1e-2,
+            "GPU E2E velocity mismatch too large: {vel_diff}, cpu={cpu_vel:?}, gpu={gpu_vel:?}"
+        );
+    });
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[test]
+#[ignore = "requires native GPU adapter/device and runs real compute passes"]
+fn test_gpu_e2e_matches_cpu_dense_contacts() {
+    use std::borrow::Cow;
+    use std::f32::consts::PI;
+
+    pollster::block_on(async {
+        let instance = wgpu::Instance::default();
+        let strict_gpu = std::env::var_os("STRICT_GPU_TEST").is_some();
+
+        let adapter = match instance
+            .request_adapter(&wgpu::RequestAdapterOptions::default())
+            .await
+        {
+            Ok(adapter) => adapter,
+            Err(err) => {
+                if strict_gpu {
+                    panic!("No GPU adapter available for ignored GPU E2E test: {err:?}");
+                }
+                eprintln!("Skipping GPU E2E dense test (no adapter): {err:?}");
+                return;
+            }
+        };
+
+        if !adapter.features().contains(wgpu::Features::PUSH_CONSTANTS) {
+            if strict_gpu {
+                panic!("Adapter does not support PUSH_CONSTANTS required by bitonic sort test");
+            }
+            eprintln!("Skipping GPU E2E dense test (PUSH_CONSTANTS unsupported)");
+            return;
+        }
+        if adapter.limits().max_push_constant_size < 12 {
+            if strict_gpu {
+                panic!(
+                    "Adapter max_push_constant_size={} is too small for bitonic sort",
+                    adapter.limits().max_push_constant_size
+                );
+            }
+            eprintln!(
+                "Skipping GPU E2E dense test (insufficient push constants: {})",
+                adapter.limits().max_push_constant_size
+            );
+            return;
+        }
+
+        let mut device_desc = wgpu::DeviceDescriptor::default();
+        device_desc.required_features = wgpu::Features::PUSH_CONSTANTS;
+        device_desc.required_limits.max_push_constant_size = 12;
+
+        let (device, queue) = match adapter.request_device(&device_desc).await {
+            Ok(pair) => pair,
+            Err(err) => {
+                if strict_gpu {
+                    panic!("Failed to create GPU device for ignored GPU E2E test: {err:?}");
+                }
+                eprintln!("Skipping GPU E2E dense test (device creation failed): {err:?}");
+                return;
+            }
+        };
+
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("gpu_dense_test_bind_group_layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("gpu_dense_test_pipeline_layout"),
+            bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[wgpu::PushConstantRange {
+                stages: wgpu::ShaderStages::COMPUTE,
+                range: 0..12,
+            }],
+        });
+
+        let hash_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("gpu_dense_test_hash_keys"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Owned(inject_shared_types(include_str!(
+                "../../assets/shaders/hash_keys.wgsl"
+            )))),
+        });
+        let bitonic_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("gpu_dense_test_bitonic_sort"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Owned(inject_shared_types(include_str!(
+                "../../assets/shaders/bitonic_sort.wgsl"
+            )))),
+        });
+        let cell_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("gpu_dense_test_cell_ranges"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Owned(inject_shared_types(include_str!(
+                "../../assets/shaders/cell_ranges.wgsl"
+            )))),
+        });
+        let collision_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("gpu_dense_test_collision"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Owned(inject_shared_types(include_str!(
+                "../../assets/shaders/collision.wgsl"
+            )))),
+        });
+        let integrate_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("gpu_dense_test_integrate"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Owned(inject_shared_types(include_str!(
+                "../../assets/shaders/integrate.wgsl"
+            )))),
+        });
+
+        let hash_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("gpu_dense_test_hash_pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &hash_shader,
+            entry_point: Some("build_keys"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        let bitonic_sort_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("gpu_dense_test_bitonic_pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &bitonic_shader,
+                entry_point: Some("bitonic_sort_step"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+        let cell_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("gpu_dense_test_cell_pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &cell_shader,
+            entry_point: Some("build_cell_ranges"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        let collision_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("gpu_dense_test_collision_pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &collision_shader,
+            entry_point: Some("collision_response"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        let integrate_first_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("gpu_dense_test_integrate_first"),
+                layout: Some(&pipeline_layout),
+                module: &integrate_shader,
+                entry_point: Some("integrate_first_half"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+        let integrate_second_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("gpu_dense_test_integrate_second"),
+                layout: Some(&pipeline_layout),
+                module: &integrate_shader,
+                entry_point: Some("integrate_second_half"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+
+        let container = Container::default();
+        let material = MaterialProperties::default();
+        let wall_props = WallProperties::default();
+        let dt = 1.0 / 5000.0;
+        let density = 5000.0;
+
+        let mut initial = Vec::<BackendParticle>::new();
+        for ix in 0..6 {
+            for iz in 0..4 {
+                let radius: f32 = if (ix + iz) % 3 == 0 { 0.01 } else { 0.006 };
+                let volume = (4.0 / 3.0) * PI * radius.powi(3);
+                let mass = density * volume;
+                let inertia = (2.0 / 5.0) * mass * radius.powi(2);
+                let pos = Vec3::new(
+                    -0.12 + ix as f32 * 0.045,
+                    -0.08 + (iz % 2) as f32 * 0.03,
+                    -0.045 + iz as f32 * 0.03,
+                );
+                let vel = Vec3::new(
+                    if ix % 2 == 0 { 1.0 } else { -0.95 },
+                    -0.3 + iz as f32 * 0.12,
+                    if iz % 2 == 0 { 0.6 } else { -0.55 },
+                );
+                initial.push(BackendParticle {
+                    pos,
+                    vel,
+                    omega: Vec3::ZERO,
+                    radius,
+                    mass,
+                    inertia,
+                });
+            }
+        }
+        for k in 0..8 {
+            let radius: f32 = if k % 2 == 0 { 0.01 } else { 0.006 };
+            let volume = (4.0 / 3.0) * PI * radius.powi(3);
+            let mass = density * volume;
+            let inertia = (2.0 / 5.0) * mass * radius.powi(2);
+            let left = k < 4;
+            let lane = (k % 4) as f32;
+            let pos = Vec3::new(
+                if left { -0.18 } else { 0.18 },
+                -0.12 + lane * 0.05,
+                -0.04 + lane * 0.025,
+            );
+            let vel = Vec3::new(
+                if left { 1.4 } else { -1.4 },
+                if k % 3 == 0 { 0.4 } else { -0.2 },
+                if k % 2 == 0 { 0.5 } else { -0.5 },
+            );
+            initial.push(BackendParticle {
+                pos,
+                vel,
+                omega: Vec3::ZERO,
+                radius,
+                mass,
+                inertia,
+            });
+        }
+
+        let num_particles = initial.len() as u32;
+        let sort_count = num_particles.next_power_of_two();
+        let grid_dim = 32u32;
+        let num_cells = grid_dim * grid_dim * grid_dim;
+        let particle_bytes_len = std::mem::size_of::<ParticleGpu>() as u64 * num_particles as u64;
+
+        let initial_gpu: Vec<ParticleGpu> = initial
+            .iter()
+            .map(|p| ParticleGpu {
+                pos: p.pos.to_array(),
+                radius: p.radius,
+                vel: p.vel.to_array(),
+                mass_inv: 1.0 / p.mass,
+                omega: p.omega.to_array(),
+                inertia_inv: 1.0 / p.inertia,
+                size_flag: if p.radius > 0.008 { 1 } else { 0 },
+                _pad: [0; 3],
+            })
+            .collect();
+
+        let params = SimulationParams {
+            dt,
+            gravity: -9.81,
+            cell_size: 0.03,
+            grid_dim,
+            world_half: [
+                container.half_extents.x,
+                container.half_extents.y,
+                container.half_extents.z,
+            ],
+            num_particles,
+            youngs_modulus: material.youngs_modulus,
+            poisson_ratio: material.poisson_ratio,
+            restitution: material.restitution,
+            friction: material.friction,
+            container_offset: container.base_position.y + container.current_offset,
+            divider_height: container.divider_height,
+            container_half_x: container.half_extents.x,
+            container_half_y: container.half_extents.y,
+            container_half_z: container.half_extents.z,
+            divider_thickness: container.divider_thickness,
+            rolling_friction: material.rolling_friction,
+            wall_restitution: wall_props.restitution,
+            wall_friction: wall_props.friction,
+            wall_damping: wall_props.damping,
+            wall_stiffness: wall_props.stiffness,
+            _pad_end: 0.0,
+        };
+
+        let particles_in = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_dense_test_particles_in"),
+            size: particle_bytes_len,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let particles_out = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_dense_test_particles_out"),
+            size: particle_bytes_len,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&particles_in, 0, bytemuck::cast_slice(&initial_gpu));
+        queue.write_buffer(&particles_out, 0, bytemuck::cast_slice(&initial_gpu));
+
+        let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_dense_test_params"),
+            size: std::mem::size_of::<SimulationParams>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&params_buffer, 0, bytemuck::bytes_of(&params));
+
+        let keys = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_dense_test_keys"),
+            size: std::mem::size_of::<u32>() as u64 * sort_count as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let particle_ids = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_dense_test_particle_ids"),
+            size: std::mem::size_of::<u32>() as u64 * sort_count as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let cell_ranges = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_dense_test_cell_ranges"),
+            size: std::mem::size_of::<crate::gpu::buffers::CellRange>() as u64 * num_cells as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let forces = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_dense_test_forces"),
+            size: std::mem::size_of::<[f32; 4]>() as u64 * num_particles as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let torques = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_dense_test_torques"),
+            size: std::mem::size_of::<[f32; 4]>() as u64 * num_particles as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let bind_group_forward = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("gpu_dense_test_bind_group_forward"),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: particles_in.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: particles_out.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: keys.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: particle_ids.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: cell_ranges.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: forces.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: torques.as_entire_binding(),
+                },
+            ],
+        });
+        let bind_group_reverse = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("gpu_dense_test_bind_group_reverse"),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: particles_out.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: particles_in.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: keys.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: particle_ids.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: cell_ranges.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: forces.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: torques.as_entire_binding(),
+                },
+            ],
+        });
+
+        let substeps = 600u32;
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("gpu_dense_test_encoder"),
+        });
+        for _ in 0..substeps {
+            run_neighbor_search_with_sort(
+                &mut encoder,
+                &bind_group_forward,
+                &hash_pipeline,
+                &bitonic_sort_pipeline,
+                &cell_pipeline,
+                &cell_ranges,
+                &forces,
+                &torques,
+                num_particles,
+                sort_count,
+            );
+            run_collision(
+                &mut encoder,
+                &bind_group_forward,
+                &collision_pipeline,
+                num_particles,
+            );
+            run_integrate(
+                &mut encoder,
+                &bind_group_forward,
+                &integrate_first_pipeline,
+                num_particles,
+            );
+
+            run_neighbor_search_with_sort(
+                &mut encoder,
+                &bind_group_reverse,
+                &hash_pipeline,
+                &bitonic_sort_pipeline,
+                &cell_pipeline,
+                &cell_ranges,
+                &forces,
+                &torques,
+                num_particles,
+                sort_count,
+            );
+            run_collision(
+                &mut encoder,
+                &bind_group_reverse,
+                &collision_pipeline,
+                num_particles,
+            );
+            run_integrate(
+                &mut encoder,
+                &bind_group_reverse,
+                &integrate_second_pipeline,
+                num_particles,
+            );
+        }
+
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_dense_test_readback"),
+            size: particle_bytes_len,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        encoder.copy_buffer_to_buffer(&particles_in, 0, &readback, 0, particle_bytes_len);
+        queue.submit([encoder.finish()]);
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+
+        let gpu_particles = map_read_buffer_blocking(&device, &readback)
+            .expect("GPU readback failed in ignored dense E2E test");
+        assert_eq!(
+            gpu_particles.len(),
+            num_particles as usize,
+            "GPU readback length mismatch"
+        );
+
+        let mut cpu_particles = initial.clone();
+        let mut contact_states: HashMap<(usize, usize), ContactState> = HashMap::new();
+        let mut particle_contacts_total = 0usize;
+        let mut wall_contacts_total = 0usize;
+
+        let box_offset = Vec3::Y * container.current_offset;
+        let box_min = container.base_position - container.half_extents + box_offset;
+        let box_max = container.base_position + container.half_extents + box_offset;
+        let divider_top = box_min.y + container.divider_height;
+        let divider_half_thickness = container.divider_thickness * 0.5;
+
+        let count_particle_overlaps = |particles: &[BackendParticle]| -> usize {
+            let mut count = 0usize;
+            for i in 0..particles.len() {
+                for j in (i + 1)..particles.len() {
+                    let p = &particles[i];
+                    let q = &particles[j];
+                    if (p.pos - q.pos).length() < (p.radius + q.radius) {
+                        count += 1;
+                    }
+                }
+            }
+            count
+        };
+        let count_wall_overlaps = |particles: &[BackendParticle]| -> usize {
+            let mut count = 0usize;
+            for p in particles {
+                let wall_hit = p.pos.y - p.radius <= box_min.y
+                    || p.pos.y + p.radius >= box_max.y
+                    || p.pos.x - p.radius <= box_min.x
+                    || p.pos.x + p.radius >= box_max.x
+                    || p.pos.z - p.radius <= box_min.z
+                    || p.pos.z + p.radius >= box_max.z;
+                let divider_hit = (p.pos.y - p.radius) < divider_top
+                    && (p.pos.x.abs() - divider_half_thickness) < p.radius;
+                if wall_hit || divider_hit {
+                    count += 1;
+                }
+            }
+            count
+        };
+
+        for _ in 0..substeps {
+            particle_contacts_total += count_particle_overlaps(&cpu_particles);
+            wall_contacts_total += count_wall_overlaps(&cpu_particles);
+            cpu_substep(
+                &mut cpu_particles,
+                &mut contact_states,
+                &container,
+                &material,
+                &wall_props,
+                dt,
+            );
+        }
+
+        assert!(
+            particle_contacts_total > 100,
+            "Scenario did not produce enough particle-particle contacts: {}",
+            particle_contacts_total
+        );
+        assert!(
+            wall_contacts_total > 100,
+            "Scenario did not produce enough wall contacts: {}",
+            wall_contacts_total
+        );
+
+        let mut max_pos_diff = 0.0f32;
+        let mut max_vel_diff = 0.0f32;
+        let mut sum_pos_diff = 0.0f32;
+        let mut sum_vel_diff = 0.0f32;
+
+        for i in 0..num_particles as usize {
+            let gpu = &gpu_particles[i];
+            let gpu_pos = Vec3::from_array(gpu.pos);
+            let gpu_vel = Vec3::from_array(gpu.vel);
+
+            let pos_diff = (cpu_particles[i].pos - gpu_pos).length();
+            let vel_diff = (cpu_particles[i].vel - gpu_vel).length();
+            max_pos_diff = max_pos_diff.max(pos_diff);
+            max_vel_diff = max_vel_diff.max(vel_diff);
+            sum_pos_diff += pos_diff;
+            sum_vel_diff += vel_diff;
+        }
+
+        let mean_pos_diff = sum_pos_diff / num_particles as f32;
+        let mean_vel_diff = sum_vel_diff / num_particles as f32;
+        println!(
+            "Dense E2E: contacts particle={}, wall={}, max_pos_diff={:.6}, mean_pos_diff={:.6}, max_vel_diff={:.6}, mean_vel_diff={:.6}",
+            particle_contacts_total,
+            wall_contacts_total,
+            max_pos_diff,
+            mean_pos_diff,
+            max_vel_diff,
+            mean_vel_diff
+        );
+
+        assert!(
+            mean_pos_diff < 1.5e-2,
+            "Dense E2E mean position mismatch too large: {}",
+            mean_pos_diff
+        );
+        assert!(
+            max_pos_diff < 6.0e-2,
+            "Dense E2E max position mismatch too large: {}",
+            max_pos_diff
+        );
+        assert!(
+            mean_vel_diff < 1.5e-1,
+            "Dense E2E mean velocity mismatch too large: {}",
+            mean_vel_diff
+        );
+        assert!(
+            max_vel_diff < 7.0e-1,
+            "Dense E2E max velocity mismatch too large: {}",
+            max_vel_diff
+        );
+    });
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[test]
+#[ignore = "requires native GPU adapter/device and runs real compute passes"]
+fn test_gpu_e2e_matches_cpu_compact_vibrating_box() {
+    use std::borrow::Cow;
+    use std::f32::consts::PI;
+
+    pollster::block_on(async {
+        let instance = wgpu::Instance::default();
+        let strict_gpu = std::env::var_os("STRICT_GPU_TEST").is_some();
+
+        let adapter = match instance
+            .request_adapter(&wgpu::RequestAdapterOptions::default())
+            .await
+        {
+            Ok(adapter) => adapter,
+            Err(err) => {
+                if strict_gpu {
+                    panic!("No GPU adapter available for ignored GPU E2E test: {err:?}");
+                }
+                eprintln!("Skipping compact vibrating E2E test (no adapter): {err:?}");
+                return;
+            }
+        };
+
+        if !adapter.features().contains(wgpu::Features::PUSH_CONSTANTS) {
+            if strict_gpu {
+                panic!("Adapter does not support PUSH_CONSTANTS required by bitonic sort test");
+            }
+            eprintln!("Skipping compact vibrating E2E test (PUSH_CONSTANTS unsupported)");
+            return;
+        }
+        if adapter.limits().max_push_constant_size < 12 {
+            if strict_gpu {
+                panic!(
+                    "Adapter max_push_constant_size={} is too small for bitonic sort",
+                    adapter.limits().max_push_constant_size
+                );
+            }
+            eprintln!(
+                "Skipping compact vibrating E2E test (insufficient push constants: {})",
+                adapter.limits().max_push_constant_size
+            );
+            return;
+        }
+
+        let mut device_desc = wgpu::DeviceDescriptor::default();
+        device_desc.required_features = wgpu::Features::PUSH_CONSTANTS;
+        device_desc.required_limits.max_push_constant_size = 12;
+
+        let (device, queue) = match adapter.request_device(&device_desc).await {
+            Ok(pair) => pair,
+            Err(err) => {
+                if strict_gpu {
+                    panic!("Failed to create GPU device for ignored GPU E2E test: {err:?}");
+                }
+                eprintln!("Skipping compact vibrating E2E test (device creation failed): {err:?}");
+                return;
+            }
+        };
+
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("gpu_compact_vib_test_bind_group_layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("gpu_compact_vib_test_pipeline_layout"),
+            bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[wgpu::PushConstantRange {
+                stages: wgpu::ShaderStages::COMPUTE,
+                range: 0..12,
+            }],
+        });
+
+        let hash_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("gpu_compact_vib_test_hash_keys"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Owned(inject_shared_types(include_str!(
+                "../../assets/shaders/hash_keys.wgsl"
+            )))),
+        });
+        let bitonic_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("gpu_compact_vib_test_bitonic_sort"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Owned(inject_shared_types(include_str!(
+                "../../assets/shaders/bitonic_sort.wgsl"
+            )))),
+        });
+        let cell_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("gpu_compact_vib_test_cell_ranges"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Owned(inject_shared_types(include_str!(
+                "../../assets/shaders/cell_ranges.wgsl"
+            )))),
+        });
+        let collision_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("gpu_compact_vib_test_collision"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Owned(inject_shared_types(include_str!(
+                "../../assets/shaders/collision.wgsl"
+            )))),
+        });
+        let integrate_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("gpu_compact_vib_test_integrate"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Owned(inject_shared_types(include_str!(
+                "../../assets/shaders/integrate.wgsl"
+            )))),
+        });
+
+        let hash_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("gpu_compact_vib_test_hash_pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &hash_shader,
+            entry_point: Some("build_keys"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        let bitonic_sort_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("gpu_compact_vib_test_bitonic_pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &bitonic_shader,
+                entry_point: Some("bitonic_sort_step"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+        let cell_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("gpu_compact_vib_test_cell_pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &cell_shader,
+            entry_point: Some("build_cell_ranges"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        let collision_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("gpu_compact_vib_test_collision_pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &collision_shader,
+            entry_point: Some("collision_response"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        let integrate_first_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("gpu_compact_vib_test_integrate_first"),
+                layout: Some(&pipeline_layout),
+                module: &integrate_shader,
+                entry_point: Some("integrate_first_half"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+        let integrate_second_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("gpu_compact_vib_test_integrate_second"),
+                layout: Some(&pipeline_layout),
+                module: &integrate_shader,
+                entry_point: Some("integrate_second_half"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+
+        let mut container = Container::default();
+        container.half_extents = Vec3::new(0.06, 0.06, 0.04);
+        container.base_position = Vec3::new(0.0, 0.0, 0.0);
+        container.divider_height = 0.04;
+        container.divider_thickness = 0.01;
+        container.current_offset = 0.0;
+
+        let material = MaterialProperties::default();
+        let wall_props = WallProperties::default();
+        let dt = 1.0 / 5000.0;
+        let density = 5000.0;
+        let oscillation_amplitude = 0.006;
+        let oscillation_frequency = 22.0;
+
+        let mut initial = Vec::<BackendParticle>::new();
+        for ix in 0..5 {
+            for iy in 0..4 {
+                for iz in 0..3 {
+                    let radius: f32 = if (ix + iy + iz) % 2 == 0 {
+                        0.0055
+                    } else {
+                        0.0048
+                    };
+                    let volume = (4.0 / 3.0) * PI * radius.powi(3);
+                    let mass = density * volume;
+                    let inertia = (2.0 / 5.0) * mass * radius.powi(2);
+                    let pos = Vec3::new(
+                        -0.036 + ix as f32 * 0.018,
+                        -0.036 + iy as f32 * 0.016,
+                        -0.018 + iz as f32 * 0.018,
+                    );
+                    let vel = Vec3::new(
+                        if (ix + iy) % 2 == 0 { 0.35 } else { -0.32 },
+                        if iy % 2 == 0 { 0.08 } else { -0.06 },
+                        if iz % 2 == 0 { 0.28 } else { -0.26 },
+                    );
+                    initial.push(BackendParticle {
+                        pos,
+                        vel,
+                        omega: Vec3::ZERO,
+                        radius,
+                        mass,
+                        inertia,
+                    });
+                }
+            }
+        }
+
+        let num_particles = initial.len() as u32;
+        let sort_count = num_particles.next_power_of_two();
+        let grid_dim = 24u32;
+        let num_cells = grid_dim * grid_dim * grid_dim;
+        let particle_bytes_len = std::mem::size_of::<ParticleGpu>() as u64 * num_particles as u64;
+
+        let initial_gpu: Vec<ParticleGpu> = initial
+            .iter()
+            .map(|p| ParticleGpu {
+                pos: p.pos.to_array(),
+                radius: p.radius,
+                vel: p.vel.to_array(),
+                mass_inv: 1.0 / p.mass,
+                omega: p.omega.to_array(),
+                inertia_inv: 1.0 / p.inertia,
+                size_flag: if p.radius > 0.005 { 1 } else { 0 },
+                _pad: [0; 3],
+            })
+            .collect();
+
+        let mut params = SimulationParams {
+            dt,
+            gravity: -9.81,
+            cell_size: 0.012,
+            grid_dim,
+            world_half: [
+                container.half_extents.x,
+                container.half_extents.y,
+                container.half_extents.z,
+            ],
+            num_particles,
+            youngs_modulus: material.youngs_modulus,
+            poisson_ratio: material.poisson_ratio,
+            restitution: material.restitution,
+            friction: material.friction,
+            container_offset: container.base_position.y + container.current_offset,
+            divider_height: container.divider_height,
+            container_half_x: container.half_extents.x,
+            container_half_y: container.half_extents.y,
+            container_half_z: container.half_extents.z,
+            divider_thickness: container.divider_thickness,
+            rolling_friction: material.rolling_friction,
+            wall_restitution: wall_props.restitution,
+            wall_friction: wall_props.friction,
+            wall_damping: wall_props.damping,
+            wall_stiffness: wall_props.stiffness,
+            _pad_end: 0.0,
+        };
+
+        let particles_in = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_compact_vib_test_particles_in"),
+            size: particle_bytes_len,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let particles_out = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_compact_vib_test_particles_out"),
+            size: particle_bytes_len,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&particles_in, 0, bytemuck::cast_slice(&initial_gpu));
+        queue.write_buffer(&particles_out, 0, bytemuck::cast_slice(&initial_gpu));
+
+        let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_compact_vib_test_params"),
+            size: std::mem::size_of::<SimulationParams>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&params_buffer, 0, bytemuck::bytes_of(&params));
+
+        let keys = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_compact_vib_test_keys"),
+            size: std::mem::size_of::<u32>() as u64 * sort_count as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let particle_ids = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_compact_vib_test_particle_ids"),
+            size: std::mem::size_of::<u32>() as u64 * sort_count as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let cell_ranges = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_compact_vib_test_cell_ranges"),
+            size: std::mem::size_of::<crate::gpu::buffers::CellRange>() as u64 * num_cells as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let forces = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_compact_vib_test_forces"),
+            size: std::mem::size_of::<[f32; 4]>() as u64 * num_particles as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let torques = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_compact_vib_test_torques"),
+            size: std::mem::size_of::<[f32; 4]>() as u64 * num_particles as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let bind_group_forward = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("gpu_compact_vib_test_bind_group_forward"),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: particles_in.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: particles_out.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: keys.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: particle_ids.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: cell_ranges.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: forces.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: torques.as_entire_binding(),
+                },
+            ],
+        });
+        let bind_group_reverse = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("gpu_compact_vib_test_bind_group_reverse"),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: particles_out.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: particles_in.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: keys.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: particle_ids.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: cell_ranges.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: forces.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: torques.as_entire_binding(),
+                },
+            ],
+        });
+
+        let substeps = 320u32;
+        let offset_for_step = |step: u32| -> f32 {
+            let t = (step as f32 + 1.0) * dt;
+            oscillation_amplitude * (2.0 * PI * oscillation_frequency * t).sin()
+        };
+
+        for step in 0..substeps {
+            params.container_offset = container.base_position.y + offset_for_step(step);
+            queue.write_buffer(&params_buffer, 0, bytemuck::bytes_of(&params));
+
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("gpu_compact_vib_test_encoder"),
+            });
+            run_neighbor_search_with_sort(
+                &mut encoder,
+                &bind_group_forward,
+                &hash_pipeline,
+                &bitonic_sort_pipeline,
+                &cell_pipeline,
+                &cell_ranges,
+                &forces,
+                &torques,
+                num_particles,
+                sort_count,
+            );
+            run_collision(
+                &mut encoder,
+                &bind_group_forward,
+                &collision_pipeline,
+                num_particles,
+            );
+            run_integrate(
+                &mut encoder,
+                &bind_group_forward,
+                &integrate_first_pipeline,
+                num_particles,
+            );
+
+            run_neighbor_search_with_sort(
+                &mut encoder,
+                &bind_group_reverse,
+                &hash_pipeline,
+                &bitonic_sort_pipeline,
+                &cell_pipeline,
+                &cell_ranges,
+                &forces,
+                &torques,
+                num_particles,
+                sort_count,
+            );
+            run_collision(
+                &mut encoder,
+                &bind_group_reverse,
+                &collision_pipeline,
+                num_particles,
+            );
+            run_integrate(
+                &mut encoder,
+                &bind_group_reverse,
+                &integrate_second_pipeline,
+                num_particles,
+            );
+            queue.submit([encoder.finish()]);
+        }
+
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_compact_vib_test_readback"),
+            size: particle_bytes_len,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut copy_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("gpu_compact_vib_test_copy_encoder"),
+        });
+        copy_encoder.copy_buffer_to_buffer(&particles_in, 0, &readback, 0, particle_bytes_len);
+        queue.submit([copy_encoder.finish()]);
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+
+        let gpu_particles = map_read_buffer_blocking(&device, &readback)
+            .expect("GPU readback failed in ignored compact vibrating E2E test");
+        assert_eq!(
+            gpu_particles.len(),
+            num_particles as usize,
+            "GPU readback length mismatch"
+        );
+
+        let mut cpu_container = container.clone();
+        let mut cpu_particles = initial.clone();
+        let mut contact_states: HashMap<(usize, usize), ContactState> = HashMap::new();
+        let mut particle_contacts_total = 0usize;
+        let mut wall_contacts_total = 0usize;
+
+        let count_particle_overlaps = |particles: &[BackendParticle]| -> usize {
+            let mut count = 0usize;
+            for i in 0..particles.len() {
+                for j in (i + 1)..particles.len() {
+                    let p = &particles[i];
+                    let q = &particles[j];
+                    if (p.pos - q.pos).length() < (p.radius + q.radius) {
+                        count += 1;
+                    }
+                }
+            }
+            count
+        };
+
+        let count_wall_overlaps = |particles: &[BackendParticle], c: &Container| -> usize {
+            let box_offset = Vec3::Y * c.current_offset;
+            let box_min = c.base_position - c.half_extents + box_offset;
+            let box_max = c.base_position + c.half_extents + box_offset;
+            let divider_top = box_min.y + c.divider_height;
+            let divider_half_thickness = c.divider_thickness * 0.5;
+
+            let mut count = 0usize;
+            for p in particles {
+                let wall_hit = p.pos.y - p.radius <= box_min.y
+                    || p.pos.y + p.radius >= box_max.y
+                    || p.pos.x - p.radius <= box_min.x
+                    || p.pos.x + p.radius >= box_max.x
+                    || p.pos.z - p.radius <= box_min.z
+                    || p.pos.z + p.radius >= box_max.z;
+                let divider_hit = (p.pos.y - p.radius) < divider_top
+                    && (p.pos.x.abs() - divider_half_thickness) < p.radius;
+                if wall_hit || divider_hit {
+                    count += 1;
+                }
+            }
+            count
+        };
+
+        for step in 0..substeps {
+            cpu_container.current_offset = offset_for_step(step);
+            particle_contacts_total += count_particle_overlaps(&cpu_particles);
+            wall_contacts_total += count_wall_overlaps(&cpu_particles, &cpu_container);
+            cpu_substep(
+                &mut cpu_particles,
+                &mut contact_states,
+                &cpu_container,
+                &material,
+                &wall_props,
+                dt,
+            );
+        }
+
+        assert!(
+            particle_contacts_total > 400,
+            "Compact vibrating scenario did not produce enough particle contacts: {}",
+            particle_contacts_total
+        );
+        assert!(
+            wall_contacts_total > 400,
+            "Compact vibrating scenario did not produce enough wall contacts: {}",
+            wall_contacts_total
+        );
+
+        let mut max_pos_diff = 0.0f32;
+        let mut max_vel_diff = 0.0f32;
+        let mut sum_pos_diff = 0.0f32;
+        let mut sum_vel_diff = 0.0f32;
+        for i in 0..num_particles as usize {
+            let gpu = &gpu_particles[i];
+            let gpu_pos = Vec3::from_array(gpu.pos);
+            let gpu_vel = Vec3::from_array(gpu.vel);
+
+            let pos_diff = (cpu_particles[i].pos - gpu_pos).length();
+            let vel_diff = (cpu_particles[i].vel - gpu_vel).length();
+            max_pos_diff = max_pos_diff.max(pos_diff);
+            max_vel_diff = max_vel_diff.max(vel_diff);
+            sum_pos_diff += pos_diff;
+            sum_vel_diff += vel_diff;
+        }
+
+        let mean_pos_diff = sum_pos_diff / num_particles as f32;
+        let mean_vel_diff = sum_vel_diff / num_particles as f32;
+        println!(
+            "Compact vibrating E2E: contacts particle={}, wall={}, max_pos_diff={:.6}, mean_pos_diff={:.6}, max_vel_diff={:.6}, mean_vel_diff={:.6}",
+            particle_contacts_total,
+            wall_contacts_total,
+            max_pos_diff,
+            mean_pos_diff,
+            max_vel_diff,
+            mean_vel_diff
+        );
+
+        assert!(
+            mean_pos_diff < 2.5e-2,
+            "Compact vibrating E2E mean position mismatch too large: {}",
+            mean_pos_diff
+        );
+        assert!(
+            max_pos_diff < 9.0e-2,
+            "Compact vibrating E2E max position mismatch too large: {}",
+            max_pos_diff
+        );
+        assert!(
+            mean_vel_diff < 2.5e-1,
+            "Compact vibrating E2E mean velocity mismatch too large: {}",
+            mean_vel_diff
+        );
+        assert!(
+            max_vel_diff < 1.2,
+            "Compact vibrating E2E max velocity mismatch too large: {}",
+            max_vel_diff
+        );
+    });
+}
+
+#[derive(Clone)]
+struct BackendParticle {
+    pos: Vec3,
+    vel: Vec3,
+    omega: Vec3,
+    radius: f32,
+    mass: f32,
+    inertia: f32,
+}
+
+fn cpu_substep(
+    particles: &mut [BackendParticle],
+    contact_states: &mut HashMap<(usize, usize), ContactState>,
+    container: &Container,
+    material: &MaterialProperties,
+    wall_props: &WallProperties,
+    dt: f32,
+) {
+    let gravity = Vec3::new(0.0, -9.81, 0.0);
+    let box_offset = Vec3::Y * container.current_offset;
+    let box_min = container.base_position - container.half_extents + box_offset;
+    let box_max = container.base_position + container.half_extents + box_offset;
+    let n = particles.len();
+
+    let mut forces = vec![Vec3::ZERO; n];
+    let mut torques = vec![Vec3::ZERO; n];
+
+    for i in 0..n {
+        let p = &particles[i];
+        let wall = compute_wall_contact_force(
+            p.pos, p.vel, p.omega, p.radius, p.mass, container, wall_props,
+        );
+        forces[i] += wall.force;
+        torques[i] += wall.torque;
+    }
+
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let p_i = &particles[i];
+            let p_j = &particles[j];
+            let state = contact_states.entry((i, j)).or_default();
+            let (f_i, f_j) = compute_particle_contact_force(
+                p_i.pos, p_i.vel, p_i.omega, p_i.radius, p_i.mass, p_j.pos, p_j.vel, p_j.omega,
+                p_j.radius, p_j.mass, material, state, dt,
+            );
+            forces[i] += f_i.force;
+            torques[i] += f_i.torque;
+            forces[j] += f_j.force;
+            torques[j] += f_j.torque;
+        }
+    }
+
+    for i in 0..n {
+        let p = &mut particles[i];
+        integrate_first_half(
+            &mut p.pos,
+            &mut p.vel,
+            &mut p.omega,
+            forces[i],
+            torques[i],
+            p.mass,
+            p.inertia,
+            gravity,
+            dt,
+        );
+        clamp_to_container(&mut p.pos, &mut p.vel, p.radius, box_min, box_max);
+        clamp_velocity(&mut p.vel, &mut p.omega, 10.0, 100.0);
+    }
+
+    forces.fill(Vec3::ZERO);
+    torques.fill(Vec3::ZERO);
+
+    for i in 0..n {
+        let p = &particles[i];
+        let wall = compute_wall_contact_force(
+            p.pos, p.vel, p.omega, p.radius, p.mass, container, wall_props,
+        );
+        forces[i] += wall.force;
+        torques[i] += wall.torque;
+    }
+
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let p_i = &particles[i];
+            let p_j = &particles[j];
+            let state = contact_states.entry((i, j)).or_default();
+            let (f_i, f_j) = compute_particle_contact_force(
+                p_i.pos, p_i.vel, p_i.omega, p_i.radius, p_i.mass, p_j.pos, p_j.vel, p_j.omega,
+                p_j.radius, p_j.mass, material, state, dt,
+            );
+            forces[i] += f_i.force;
+            torques[i] += f_i.torque;
+            forces[j] += f_j.force;
+            torques[j] += f_j.torque;
+        }
+    }
+
+    for i in 0..n {
+        let p = &mut particles[i];
+        integrate_second_half(
+            &mut p.vel,
+            &mut p.omega,
+            forces[i],
+            torques[i],
+            p.mass,
+            p.inertia,
+            gravity,
+            dt,
+        );
+        clamp_to_container(&mut p.pos, &mut p.vel, p.radius, box_min, box_max);
+        clamp_velocity(&mut p.vel, &mut p.omega, 10.0, 100.0);
+    }
+
+    // ContactHistory::cleanup 相当（現在のモデルでは last_normal 以外には影響しない）
+    contact_states.retain(|_, state| state.active);
+    for state in contact_states.values_mut() {
+        state.active = false;
+    }
+}
+
+fn gpu_sequence_substep(
+    particles: &mut [BackendParticle],
+    container: &Container,
+    material: &MaterialProperties,
+    wall_props: &WallProperties,
+    dt: f32,
+) {
+    let gravity = Vec3::new(0.0, -9.81, 0.0);
+    let box_offset = Vec3::Y * container.current_offset;
+    let box_min = container.base_position - container.half_extents + box_offset;
+    let box_max = container.base_position + container.half_extents + box_offset;
+    let n = particles.len();
+
+    let mut forces = vec![Vec3::ZERO; n];
+    let mut torques = vec![Vec3::ZERO; n];
+    let snapshot = particles.to_vec();
+
+    for i in 0..n {
+        let p = &snapshot[i];
+        let wall = compute_wall_contact_force(
+            p.pos, p.vel, p.omega, p.radius, p.mass, container, wall_props,
+        );
+        forces[i] += wall.force;
+        torques[i] += wall.torque;
+
+        for (j, q) in snapshot.iter().enumerate() {
+            if j == i {
+                continue;
+            }
+            let mut tmp = ContactState::default();
+            let (f_i, _) = compute_particle_contact_force(
+                p.pos, p.vel, p.omega, p.radius, p.mass, q.pos, q.vel, q.omega, q.radius, q.mass,
+                material, &mut tmp, dt,
+            );
+            forces[i] += f_i.force;
+            torques[i] += f_i.torque;
+        }
+    }
+
+    for i in 0..n {
+        let p = &mut particles[i];
+        integrate_first_half(
+            &mut p.pos,
+            &mut p.vel,
+            &mut p.omega,
+            forces[i],
+            torques[i],
+            p.mass,
+            p.inertia,
+            gravity,
+            dt,
+        );
+        clamp_to_container(&mut p.pos, &mut p.vel, p.radius, box_min, box_max);
+        clamp_velocity(&mut p.vel, &mut p.omega, 10.0, 100.0);
+    }
+
+    forces.fill(Vec3::ZERO);
+    torques.fill(Vec3::ZERO);
+    let snapshot = particles.to_vec();
+
+    for i in 0..n {
+        let p = &snapshot[i];
+        let wall = compute_wall_contact_force(
+            p.pos, p.vel, p.omega, p.radius, p.mass, container, wall_props,
+        );
+        forces[i] += wall.force;
+        torques[i] += wall.torque;
+
+        for (j, q) in snapshot.iter().enumerate() {
+            if j == i {
+                continue;
+            }
+            let mut tmp = ContactState::default();
+            let (f_i, _) = compute_particle_contact_force(
+                p.pos, p.vel, p.omega, p.radius, p.mass, q.pos, q.vel, q.omega, q.radius, q.mass,
+                material, &mut tmp, dt,
+            );
+            forces[i] += f_i.force;
+            torques[i] += f_i.torque;
+        }
+    }
+
+    for i in 0..n {
+        let p = &mut particles[i];
+        integrate_second_half(
+            &mut p.vel,
+            &mut p.omega,
+            forces[i],
+            torques[i],
+            p.mass,
+            p.inertia,
+            gravity,
+            dt,
+        );
+        clamp_to_container(&mut p.pos, &mut p.vel, p.radius, box_min, box_max);
+        clamp_velocity(&mut p.vel, &mut p.omega, 10.0, 100.0);
+    }
+}
+
+#[test]
+fn test_cpu_gpu_sequence_parity_with_walls() {
+    use std::f32::consts::PI;
+
+    let container = Container::default();
+    let material = MaterialProperties::default();
+    let wall_props = WallProperties::default();
+    let dt = 1.0 / 5000.0;
+    let density = 5000.0;
+
+    let mk_particle = |pos: Vec3, vel: Vec3, radius: f32| {
+        let volume = (4.0 / 3.0) * PI * radius.powi(3);
+        let mass = density * volume;
+        let inertia = (2.0 / 5.0) * mass * radius.powi(2);
+        BackendParticle {
+            pos,
+            vel,
+            omega: Vec3::ZERO,
+            radius,
+            mass,
+            inertia,
+        }
+    };
+
+    let initial = vec![
+        mk_particle(
+            Vec3::new(-0.08, -0.02, 0.00),
+            Vec3::new(0.8, -0.4, 0.2),
+            0.01,
+        ),
+        mk_particle(
+            Vec3::new(-0.05, -0.01, 0.01),
+            Vec3::new(-0.3, -0.2, 0.1),
+            0.006,
+        ),
+        mk_particle(
+            Vec3::new(-0.02, 0.00, -0.01),
+            Vec3::new(0.4, -0.1, -0.3),
+            0.006,
+        ),
+        mk_particle(Vec3::new(0.03, 0.01, 0.00), Vec3::new(-0.5, 0.0, 0.2), 0.01),
+        mk_particle(
+            Vec3::new(0.06, 0.02, -0.01),
+            Vec3::new(0.1, -0.3, 0.4),
+            0.006,
+        ),
+        mk_particle(
+            Vec3::new(0.09, 0.03, 0.01),
+            Vec3::new(-0.2, -0.2, -0.2),
+            0.006,
+        ),
+    ];
+
+    let mut cpu_particles = initial.clone();
+    let mut gpu_particles = initial;
+    let mut contact_states: HashMap<(usize, usize), ContactState> = HashMap::new();
+
+    for _ in 0..300 {
+        cpu_substep(
+            &mut cpu_particles,
+            &mut contact_states,
+            &container,
+            &material,
+            &wall_props,
+            dt,
+        );
+        gpu_sequence_substep(&mut gpu_particles, &container, &material, &wall_props, dt);
+    }
+
+    let mut max_pos_diff = 0.0f32;
+    let mut max_vel_diff = 0.0f32;
+    for i in 0..cpu_particles.len() {
+        let pos_diff = (cpu_particles[i].pos - gpu_particles[i].pos).length();
+        let vel_diff = (cpu_particles[i].vel - gpu_particles[i].vel).length();
+        max_pos_diff = max_pos_diff.max(pos_diff);
+        max_vel_diff = max_vel_diff.max(vel_diff);
+    }
+
+    assert!(
+        max_pos_diff < 2e-3,
+        "CPU/GPU sequence position mismatch too large: {}",
+        max_pos_diff
+    );
+    assert!(
+        max_vel_diff < 2e-2,
+        "CPU/GPU sequence velocity mismatch too large: {}",
+        max_vel_diff
+    );
 }

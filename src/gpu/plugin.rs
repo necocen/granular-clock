@@ -11,9 +11,12 @@ use bevy::{
 };
 use std::sync::Arc;
 
-use crate::physics::{MaterialProperties, ParticleSize, ParticleStore, PhysicsConstants};
+use crate::physics::{
+    MaterialProperties, ParticleSize, ParticleStore, PhysicsConstants, WallProperties,
+};
 use crate::simulation::{
-    Container, PhysicsBackend, SimulationSettings, SimulationState, SimulationTime,
+    Container, OscillationParams, PhysicsBackend, SimulationSettings, SimulationState,
+    SimulationTime,
 };
 
 use super::{
@@ -60,6 +63,13 @@ impl ExtractResource for GpuParticleData {
 #[derive(Resource, Clone, Default)]
 pub struct ExtractedContainerParams {
     pub container_offset: f32,
+    pub base_position_y: f32,
+    pub oscillation_enabled: bool,
+    pub oscillation_amplitude: f32,
+    pub oscillation_frequency: f32,
+    pub sim_elapsed: f64,
+    pub sim_dt: f32,
+    pub substeps_per_frame: u32,
 }
 
 impl ExtractResource for ExtractedContainerParams {
@@ -143,11 +153,20 @@ fn init_pipelines(
 /// コンテナのオフセットを更新
 fn update_container_params(
     container: Res<Container>,
+    osc_params: Res<OscillationParams>,
+    sim_time: Res<SimulationTime>,
+    settings: Res<SimulationSettings>,
     mut params: ResMut<ExtractedContainerParams>,
 ) {
-    // GPU シェーダーは floor_y = -container_half_y + container_offset で計算するため、
-    // base_position.y を含めないと視覚的な床位置とずれる
+    // デフォルト（フレーム基準）オフセット。GPUノード側でサブステップごとに上書きする。
     params.container_offset = container.base_position.y + container.current_offset;
+    params.base_position_y = container.base_position.y;
+    params.oscillation_enabled = osc_params.enabled;
+    params.oscillation_amplitude = osc_params.amplitude;
+    params.oscillation_frequency = osc_params.frequency;
+    params.sim_elapsed = sim_time.elapsed;
+    params.sim_dt = sim_time.dt;
+    params.substeps_per_frame = settings.substeps_per_frame;
 }
 
 /// Main World の粒子データを GpuParticleData に抽出（初回または粒子数変更時）
@@ -157,6 +176,7 @@ fn extract_particle_data(
     container: Res<Container>,
     sim_time: Res<SimulationTime>,
     material: Res<MaterialProperties>,
+    wall_props: Res<WallProperties>,
     physics: Res<PhysicsConstants>,
     grid_settings: Res<GridSettings>,
     backend: Res<PhysicsBackend>,
@@ -221,7 +241,11 @@ fn extract_particle_data(
         container_half_z: container.half_extents.z,
         divider_thickness: container.divider_thickness,
         rolling_friction: material.rolling_friction,
-        _pad: 0.0,
+        wall_restitution: wall_props.restitution,
+        wall_friction: wall_props.friction,
+        wall_damping: wall_props.damping,
+        wall_stiffness: wall_props.stiffness,
+        _pad_end: 0.0,
     };
 
     gpu_data.particles = Arc::new(particles);
@@ -274,24 +298,46 @@ fn prepare_gpu_buffers(
         return;
     }
 
+    // bitonic sort の非2冪問題を避けるため、容量は常に 2 のべき乗で確保する
+    let min_capacity = num_particles.max(2048);
+    let desired_capacity = min_capacity
+        .checked_next_power_of_two()
+        .unwrap_or(min_capacity);
+
     // バッファがなければ作成
     if buffers.is_none() {
-        let capacity = num_particles.max(2048);
         let grid_size = gpu_data.params.grid_dim;
-        let mut new_buffers = GpuPhysicsBuffers::new(&render_device, capacity, grid_size);
+        let mut new_buffers = GpuPhysicsBuffers::new(&render_device, desired_capacity, grid_size);
         // 容量はバッファサイズだが、実際の粒子数は0（まだアップロードしていない）
         new_buffers.num_particles = 0;
         commands.insert_resource(new_buffers);
 
         // ステージングバッファも作成
         if staging.is_none() {
-            let new_staging = ReadbackStaging::new(&render_device, capacity);
+            let new_staging = ReadbackStaging::new(&render_device, desired_capacity);
             commands.insert_resource(new_staging);
         }
         return;
     }
 
     let buffers = buffers.as_mut().unwrap();
+
+    // 粒子数が容量を超えたら再確保
+    if num_particles > buffers.capacity {
+        let grid_size = gpu_data.params.grid_dim;
+        let mut new_buffers = GpuPhysicsBuffers::new(&render_device, desired_capacity, grid_size);
+        new_buffers.num_particles = 0;
+        commands.insert_resource(new_buffers);
+
+        let needs_new_staging = staging
+            .map(|s| s.size < std::mem::size_of::<ParticleGpu>() as u64 * desired_capacity as u64)
+            .unwrap_or(true);
+        if needs_new_staging {
+            let new_staging = ReadbackStaging::new(&render_device, desired_capacity);
+            commands.insert_resource(new_staging);
+        }
+        return;
+    }
 
     // 世代が変わった場合（初回またはReset後）に粒子データを GPU に転送
     // 注: particles_out に書き込む。node.update() でスワップされた後、

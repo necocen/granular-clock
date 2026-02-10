@@ -62,10 +62,10 @@ pub struct MaterialProperties {
 impl Default for MaterialProperties {
     fn default() -> Self {
         Self {
-            youngs_modulus: 5e6, // 5MPa（柔らかめに設定）
+            youngs_modulus: 1e7, // 10MPa　かため
             poisson_ratio: 0.25,
-            restitution: 0.3,
-            friction: 0.5,
+            restitution: 0.6, // 反発係数（中程度）
+            friction: 0.3,
             rolling_friction: 0.1,
         }
     }

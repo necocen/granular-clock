@@ -13,8 +13,10 @@ pub struct GpuPhysicsPipelines {
     pub cell_ranges_pipeline: CachedComputePipelineId,
     /// 衝突検出・力計算パイプライン
     pub collision_pipeline: CachedComputePipelineId,
-    /// 積分パイプライン
-    pub integrate_pipeline: CachedComputePipelineId,
+    /// 積分パイプライン（Verlet 前半）
+    pub integrate_first_half_pipeline: CachedComputePipelineId,
+    /// 積分パイプライン（Verlet 後半）
+    pub integrate_second_half_pipeline: CachedComputePipelineId,
     /// 共有型定義シェーダー（#import 解決用にハンドルを保持）
     pub _physics_types_shader: Handle<Shader>,
 }
@@ -145,7 +147,7 @@ impl GpuPhysicsPipelines {
                 entry_point: Some("bitonic_sort_step".into()),
                 push_constant_ranges: vec![PushConstantRange {
                     stages: ShaderStages::COMPUTE,
-                    range: 0..8,
+                    range: 0..12,
                 }],
                 zero_initialize_workgroup_memory: true,
             });
@@ -171,15 +173,27 @@ impl GpuPhysicsPipelines {
             zero_initialize_workgroup_memory: true,
         });
 
-        let integrate_pipeline = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
-            label: Some("integrate_pipeline".into()),
-            layout: vec![bind_group_layout_desc.clone()],
-            shader: integrate_shader,
-            shader_defs: vec![],
-            entry_point: Some("integrate".into()),
-            push_constant_ranges: vec![],
-            zero_initialize_workgroup_memory: true,
-        });
+        let integrate_first_half_pipeline =
+            pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
+                label: Some("integrate_first_half_pipeline".into()),
+                layout: vec![bind_group_layout_desc.clone()],
+                shader: integrate_shader.clone(),
+                shader_defs: vec![],
+                entry_point: Some("integrate_first_half".into()),
+                push_constant_ranges: vec![],
+                zero_initialize_workgroup_memory: true,
+            });
+
+        let integrate_second_half_pipeline =
+            pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
+                label: Some("integrate_second_half_pipeline".into()),
+                layout: vec![bind_group_layout_desc.clone()],
+                shader: integrate_shader,
+                shader_defs: vec![],
+                entry_point: Some("integrate_second_half".into()),
+                push_constant_ranges: vec![],
+                zero_initialize_workgroup_memory: true,
+            });
 
         Self {
             bind_group_layout_desc,
@@ -187,7 +201,8 @@ impl GpuPhysicsPipelines {
             bitonic_sort_pipeline,
             cell_ranges_pipeline,
             collision_pipeline,
-            integrate_pipeline,
+            integrate_first_half_pipeline,
+            integrate_second_half_pipeline,
             _physics_types_shader: physics_types_shader,
         }
     }

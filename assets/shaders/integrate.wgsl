@@ -11,8 +11,70 @@
 @group(0) @binding(6) var<storage, read_write> forces: array<vec4<f32>>;
 @group(0) @binding(7) var<storage, read_write> torques: array<vec4<f32>>;
 
+fn clamp_to_container(p: ptr<function, Particle>) {
+    let box_min = vec3<f32>(
+        -params.container_half_x,
+        -params.container_half_y + params.container_offset,
+        -params.container_half_z,
+    );
+    let box_max = vec3<f32>(
+        params.container_half_x,
+        params.container_half_y + params.container_offset,
+        params.container_half_z,
+    );
+
+    // X軸
+    let x_min = box_min.x + (*p).radius;
+    let x_max = box_max.x - (*p).radius;
+    if ((*p).pos.x < x_min) {
+        (*p).pos.x = x_min;
+        (*p).vel.x = max((*p).vel.x, 0.0);
+    } else if ((*p).pos.x > x_max) {
+        (*p).pos.x = x_max;
+        (*p).vel.x = min((*p).vel.x, 0.0);
+    }
+
+    // Y軸
+    let y_min = box_min.y + (*p).radius;
+    let y_max = box_max.y - (*p).radius;
+    if ((*p).pos.y < y_min) {
+        (*p).pos.y = y_min;
+        (*p).vel.y = max((*p).vel.y, 0.0);
+    } else if ((*p).pos.y > y_max) {
+        (*p).pos.y = y_max;
+        (*p).vel.y = min((*p).vel.y, 0.0);
+    }
+
+    // Z軸
+    let z_min = box_min.z + (*p).radius;
+    let z_max = box_max.z - (*p).radius;
+    if ((*p).pos.z < z_min) {
+        (*p).pos.z = z_min;
+        (*p).vel.z = max((*p).vel.z, 0.0);
+    } else if ((*p).pos.z > z_max) {
+        (*p).pos.z = z_max;
+        (*p).vel.z = min((*p).vel.z, 0.0);
+    }
+}
+
+fn clamp_velocity(p: ptr<function, Particle>) {
+    // CPU 側と同じ制限値
+    let max_vel = 10.0;
+    let max_omega = 100.0;
+
+    let vel_mag = length((*p).vel);
+    if (vel_mag > max_vel) {
+        (*p).vel *= max_vel / vel_mag;
+    }
+
+    let omega_mag = length((*p).omega);
+    if (omega_mag > max_omega) {
+        (*p).omega *= max_omega / omega_mag;
+    }
+}
+
 @compute @workgroup_size(64)
-fn integrate(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn integrate_first_half(@builtin(global_invocation_id) gid: vec3<u32>) {
     let id = gid.x;
     if (id >= params.num_particles) {
         return;
@@ -28,97 +90,47 @@ fn integrate(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    // 加速度
-    let gravity_force = vec3<f32>(0.0, params.gravity / p.mass_inv, 0.0);
-    let a = (f + gravity_force) * p.mass_inv;
-
-    // 角加速度
+    let a = f * p.mass_inv + vec3<f32>(0.0, params.gravity, 0.0);
     let alpha = t * p.inertia_inv;
 
-    // Velocity Verlet 積分
-    p.vel += a * params.dt;
+    // Velocity Verlet 前半:
+    // 速度を半更新し、位置を全更新
+    p.vel += 0.5 * a * params.dt;
+    p.omega += 0.5 * alpha * params.dt;
     p.pos += p.vel * params.dt;
 
-    // 角速度の積分
-    p.omega += alpha * params.dt;
+    clamp_to_container(&p);
+    clamp_velocity(&p);
 
-    // 速度クランプ（数値不安定の防止）
-    let max_vel = 10.0; // m/s
-    let vel_mag = length(p.vel);
-    if (vel_mag > max_vel) {
-        p.vel = p.vel * (max_vel / vel_mag);
+    particles_out[id] = p;
+}
+
+@compute @workgroup_size(64)
+fn integrate_second_half(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let id = gid.x;
+    if (id >= params.num_particles) {
+        return;
     }
 
-    // 角速度クランプ
-    let max_omega = 100.0; // rad/s
-    let omega_mag = length(p.omega);
-    if (omega_mag > max_omega) {
-        p.omega = p.omega * (max_omega / omega_mag);
+    var p = particles_in[id];
+    let f = forces[id].xyz;
+    let t = torques[id].xyz;
+
+    if (any(p.pos != p.pos) || any(p.vel != p.vel) || any(p.omega != p.omega) || any(f != f) || any(t != t)) {
+        particles_out[id] = p;
+        return;
     }
 
-    // 壁との衝突（簡易版）
-    let floor_y = -params.container_half_y + params.container_offset;
-    let ceiling_y = params.container_half_y + params.container_offset;
+    let a = f * p.mass_inv + vec3<f32>(0.0, params.gravity, 0.0);
+    let alpha = t * p.inertia_inv;
 
-    // 床
-    if (p.pos.y - p.radius < floor_y) {
-        p.pos.y = floor_y + p.radius;
-        p.vel.y = -p.vel.y * params.restitution;
-    }
+    // Velocity Verlet 後半:
+    // 新しい力で速度を半更新
+    p.vel += 0.5 * a * params.dt;
+    p.omega += 0.5 * alpha * params.dt;
 
-    // 天井
-    if (p.pos.y + p.radius > ceiling_y) {
-        p.pos.y = ceiling_y - p.radius;
-        p.vel.y = -p.vel.y * params.restitution;
-    }
-
-    // 左右の壁
-    if (p.pos.x - p.radius < -params.container_half_x) {
-        p.pos.x = -params.container_half_x + p.radius;
-        p.vel.x = -p.vel.x * params.restitution;
-    }
-    if (p.pos.x + p.radius > params.container_half_x) {
-        p.pos.x = params.container_half_x - p.radius;
-        p.vel.x = -p.vel.x * params.restitution;
-    }
-
-    // 前後の壁
-    if (p.pos.z - p.radius < -params.container_half_z) {
-        p.pos.z = -params.container_half_z + p.radius;
-        p.vel.z = -p.vel.z * params.restitution;
-    }
-    if (p.pos.z + p.radius > params.container_half_z) {
-        p.pos.z = params.container_half_z - p.radius;
-        p.vel.z = -p.vel.z * params.restitution;
-    }
-
-    // 仕切り（中央のX=0付近）— 位置ベースの押し出し（CPU版と同等）
-    let divider_top = floor_y + params.divider_height;
-    let half_thickness = params.divider_thickness * 0.5;
-
-    if (p.pos.y - p.radius < divider_top) {
-        let particle_left = p.pos.x - p.radius;
-        let particle_right = p.pos.x + p.radius;
-
-        // 粒子が仕切りと重なっているかチェック
-        if (particle_left < half_thickness && particle_right > -half_thickness) {
-            if (p.pos.x >= 0.0) {
-                // 右側に押し出す
-                let overlap = half_thickness - particle_left;
-                if (overlap > 0.0) {
-                    p.pos.x += overlap;
-                    p.vel.x = abs(p.vel.x) * params.restitution;
-                }
-            } else {
-                // 左側に押し出す
-                let overlap = particle_right - (-half_thickness);
-                if (overlap > 0.0) {
-                    p.pos.x -= overlap;
-                    p.vel.x = -abs(p.vel.x) * params.restitution;
-                }
-            }
-        }
-    }
+    clamp_to_container(&p);
+    clamp_velocity(&p);
 
     particles_out[id] = p;
 }
