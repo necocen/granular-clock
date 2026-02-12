@@ -3,16 +3,14 @@ use bevy::{prelude::*, render::render_resource::*};
 /// コンピュートパイプラインのリソース
 #[derive(Resource)]
 pub struct GpuPhysicsPipelines {
-    /// ハッシュキー生成パスのバインドグループレイアウト
-    pub hash_bind_group_layout_desc: BindGroupLayoutDescriptor,
-    /// Bitonic ソートパスのバインドグループレイアウト
-    pub bitonic_bind_group_layout_desc: BindGroupLayoutDescriptor,
-    /// セル範囲構築パスのバインドグループレイアウト
-    pub cell_ranges_bind_group_layout_desc: BindGroupLayoutDescriptor,
-    /// 衝突検出・接触力計算パスのバインドグループレイアウト
-    pub collision_bind_group_layout_desc: BindGroupLayoutDescriptor,
-    /// 積分パスのバインドグループレイアウト
-    pub integrate_bind_group_layout_desc: BindGroupLayoutDescriptor,
+    /// 共通パラメータ（uniform）のバインドグループレイアウト
+    pub params_bind_group_layout_desc: BindGroupLayoutDescriptor,
+    /// 粒子入出力（in/out）のバインドグループレイアウト
+    pub particles_bind_group_layout_desc: BindGroupLayoutDescriptor,
+    /// 空間探索（keys / ids / cell_ranges）のバインドグループレイアウト
+    pub spatial_bind_group_layout_desc: BindGroupLayoutDescriptor,
+    /// 接触力・トルク（forces / torques）のバインドグループレイアウト
+    pub contact_bind_group_layout_desc: BindGroupLayoutDescriptor,
     /// ハッシュキー生成パイプライン
     pub hash_keys_pipeline: CachedComputePipelineId,
     /// Bitonic sort パイプライン（複数ステップ）
@@ -31,62 +29,30 @@ pub struct GpuPhysicsPipelines {
 
 impl GpuPhysicsPipelines {
     pub fn create(pipeline_cache: &PipelineCache, asset_server: &AssetServer) -> Self {
-        // Pass 1: Hash keys
-        let hash_bind_group_layout_desc = BindGroupLayoutDescriptor::new(
-            "gpu_physics_hash_bind_group_layout",
+        // Group 0: params
+        let params_bind_group_layout_desc = BindGroupLayoutDescriptor::new(
+            "gpu_physics_params_bind_group_layout",
+            &[BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        );
+
+        // Group 1: particles (in/out)
+        let particles_bind_group_layout_desc = BindGroupLayoutDescriptor::new(
+            "gpu_physics_particles_bind_group_layout",
             &[
                 BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 1,
                     visibility: ShaderStages::COMPUTE,
                     ty: BindingType::Buffer {
                         ty: BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        );
-
-        // Pass 2: Bitonic sort
-        let bitonic_bind_group_layout_desc = BindGroupLayoutDescriptor::new(
-            "gpu_physics_bitonic_bind_group_layout",
-            &[
-                BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -105,15 +71,15 @@ impl GpuPhysicsPipelines {
             ],
         );
 
-        // Pass 3: Cell ranges
-        let cell_ranges_bind_group_layout_desc = BindGroupLayoutDescriptor::new(
-            "gpu_physics_cell_ranges_bind_group_layout",
+        // Group 2: spatial search buffers
+        let spatial_bind_group_layout_desc = BindGroupLayoutDescriptor::new(
+            "gpu_physics_spatial_bind_group_layout",
             &[
                 BindGroupLayoutEntry {
                     binding: 0,
                     visibility: ShaderStages::COMPUTE,
                     ty: BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
+                        ty: BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -123,7 +89,7 @@ impl GpuPhysicsPipelines {
                     binding: 1,
                     visibility: ShaderStages::COMPUTE,
                     ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: true },
+                        ty: BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -142,15 +108,15 @@ impl GpuPhysicsPipelines {
             ],
         );
 
-        // Pass 4: Collision
-        let collision_bind_group_layout_desc = BindGroupLayoutDescriptor::new(
-            "gpu_physics_collision_bind_group_layout",
+        // Group 3: contact force buffers
+        let contact_bind_group_layout_desc = BindGroupLayoutDescriptor::new(
+            "gpu_physics_contact_bind_group_layout",
             &[
                 BindGroupLayoutEntry {
                     binding: 0,
                     visibility: ShaderStages::COMPUTE,
                     ty: BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
+                        ty: BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -160,114 +126,7 @@ impl GpuPhysicsPipelines {
                     binding: 1,
                     visibility: ShaderStages::COMPUTE,
                     ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
                         ty: BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 6,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        );
-
-        // Pass 5: Integrate
-        let integrate_bind_group_layout_desc = BindGroupLayoutDescriptor::new(
-            "gpu_physics_integrate_bind_group_layout",
-            &[
-                BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -288,7 +147,11 @@ impl GpuPhysicsPipelines {
 
         let hash_keys_pipeline = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
             label: Some("hash_keys_pipeline".into()),
-            layout: vec![hash_bind_group_layout_desc.clone()],
+            layout: vec![
+                params_bind_group_layout_desc.clone(),
+                particles_bind_group_layout_desc.clone(),
+                spatial_bind_group_layout_desc.clone(),
+            ],
             shader: hash_keys_shader,
             shader_defs: vec![],
             entry_point: Some("build_keys".into()),
@@ -299,7 +162,7 @@ impl GpuPhysicsPipelines {
         let bitonic_sort_pipeline =
             pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
                 label: Some("bitonic_sort_pipeline".into()),
-                layout: vec![bitonic_bind_group_layout_desc.clone()],
+                layout: vec![spatial_bind_group_layout_desc.clone()],
                 shader: bitonic_sort_shader,
                 shader_defs: vec![],
                 entry_point: Some("bitonic_sort_step".into()),
@@ -313,7 +176,10 @@ impl GpuPhysicsPipelines {
         let cell_ranges_pipeline =
             pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
                 label: Some("cell_ranges_pipeline".into()),
-                layout: vec![cell_ranges_bind_group_layout_desc.clone()],
+                layout: vec![
+                    params_bind_group_layout_desc.clone(),
+                    spatial_bind_group_layout_desc.clone(),
+                ],
                 shader: cell_ranges_shader,
                 shader_defs: vec![],
                 entry_point: Some("build_cell_ranges".into()),
@@ -323,7 +189,12 @@ impl GpuPhysicsPipelines {
 
         let collision_pipeline = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
             label: Some("collision_pipeline".into()),
-            layout: vec![collision_bind_group_layout_desc.clone()],
+            layout: vec![
+                params_bind_group_layout_desc.clone(),
+                particles_bind_group_layout_desc.clone(),
+                spatial_bind_group_layout_desc.clone(),
+                contact_bind_group_layout_desc.clone(),
+            ],
             shader: collision_shader,
             shader_defs: vec![],
             entry_point: Some("collision_response".into()),
@@ -334,7 +205,11 @@ impl GpuPhysicsPipelines {
         let integrate_first_half_pipeline =
             pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
                 label: Some("integrate_first_half_pipeline".into()),
-                layout: vec![integrate_bind_group_layout_desc.clone()],
+                layout: vec![
+                    params_bind_group_layout_desc.clone(),
+                    particles_bind_group_layout_desc.clone(),
+                    contact_bind_group_layout_desc.clone(),
+                ],
                 shader: integrate_shader.clone(),
                 shader_defs: vec![],
                 entry_point: Some("integrate_first_half".into()),
@@ -345,7 +220,11 @@ impl GpuPhysicsPipelines {
         let integrate_second_half_pipeline =
             pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
                 label: Some("integrate_second_half_pipeline".into()),
-                layout: vec![integrate_bind_group_layout_desc.clone()],
+                layout: vec![
+                    params_bind_group_layout_desc.clone(),
+                    particles_bind_group_layout_desc.clone(),
+                    contact_bind_group_layout_desc.clone(),
+                ],
                 shader: integrate_shader,
                 shader_defs: vec![],
                 entry_point: Some("integrate_second_half".into()),
@@ -354,11 +233,10 @@ impl GpuPhysicsPipelines {
             });
 
         Self {
-            hash_bind_group_layout_desc,
-            bitonic_bind_group_layout_desc,
-            cell_ranges_bind_group_layout_desc,
-            collision_bind_group_layout_desc,
-            integrate_bind_group_layout_desc,
+            params_bind_group_layout_desc,
+            particles_bind_group_layout_desc,
+            spatial_bind_group_layout_desc,
+            contact_bind_group_layout_desc,
             hash_keys_pipeline,
             bitonic_sort_pipeline,
             cell_ranges_pipeline,

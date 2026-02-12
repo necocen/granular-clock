@@ -3,10 +3,10 @@
 #import granular_clock::physics_types::{Particle, Params}
 
 @group(0) @binding(0) var<uniform> params: Params;
-@group(0) @binding(1) var<storage, read> particles_in: array<Particle>;
-@group(0) @binding(2) var<storage, read_write> particles_out: array<Particle>;
-@group(0) @binding(3) var<storage, read> forces: array<vec4<f32>>;
-@group(0) @binding(4) var<storage, read> torques: array<vec4<f32>>;
+@group(1) @binding(0) var<storage, read> particles_in: array<Particle>;
+@group(1) @binding(1) var<storage, read_write> particles_out: array<Particle>;
+@group(2) @binding(0) var<storage, read_write> forces: array<vec4<f32>>;
+@group(2) @binding(1) var<storage, read_write> torques: array<vec4<f32>>;
 
 fn clamp_to_container(p: ptr<function, Particle>) {
     let box_min = vec3<f32>(

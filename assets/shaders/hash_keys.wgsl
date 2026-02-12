@@ -3,9 +3,9 @@
 #import granular_clock::physics_types::{Particle, Params}
 
 @group(0) @binding(0) var<uniform> params: Params;
-@group(0) @binding(1) var<storage, read> particles_in: array<Particle>;
-@group(0) @binding(2) var<storage, read_write> keys: array<u32>;
-@group(0) @binding(3) var<storage, read_write> particle_ids: array<u32>;
+@group(1) @binding(0) var<storage, read> particles_in: array<Particle>;
+@group(2) @binding(0) var<storage, read_write> keys: array<u32>;
+@group(2) @binding(1) var<storage, read_write> particle_ids: array<u32>;
 
 fn hash_cell(cell: vec3<i32>) -> u32 {
     let dim = i32(params.grid_dim);

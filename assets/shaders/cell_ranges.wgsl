@@ -4,8 +4,8 @@
 #import granular_clock::physics_types::{Particle, Params}
 
 @group(0) @binding(0) var<uniform> params: Params;
-@group(0) @binding(1) var<storage, read> keys: array<u32>;
-@group(0) @binding(2) var<storage, read_write> cell_ranges: array<vec2<u32>>;
+@group(1) @binding(0) var<storage, read_write> keys: array<u32>;
+@group(1) @binding(2) var<storage, read_write> cell_ranges: array<vec2<u32>>;
 
 @compute @workgroup_size(64)
 fn build_cell_ranges(@builtin(global_invocation_id) gid: vec3<u32>) {

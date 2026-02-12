@@ -21,18 +21,17 @@ pub struct GpuPhysicsLabel;
 ///
 /// 1フレームあたり複数サブステップを実行する。
 /// バッファスロット A/B を固定で使い分ける。
-/// パスごとに最小 binding のバインドグループを保持する。
+/// bind group は用途単位（params / particles / spatial / contact）で再利用する。
 struct GpuPhysicsBindGroups {
-    hash: [BindGroup; 2],
-    bitonic: BindGroup,
-    cell_ranges: BindGroup,
-    collision: [BindGroup; 2],
-    integrate: [BindGroup; 2],
+    params: BindGroup,
+    particles: [BindGroup; 2],
+    spatial: BindGroup,
+    contact: BindGroup,
 }
 
 #[derive(Default)]
 pub struct GpuPhysicsNode {
-    /// パス別バインドグループ一式
+    /// 用途別バインドグループ一式
     bind_groups: Option<GpuPhysicsBindGroups>,
     /// 1フレームあたりのサブステップ数
     substeps: u32,
@@ -85,119 +84,67 @@ impl Node for GpuPhysicsNode {
         let render_device = world.resource::<RenderDevice>();
         let pipeline_cache = world.resource::<PipelineCache>();
 
-        // パイプラインキャッシュからパス別バインドグループレイアウトを取得
-        let hash_layout =
-            pipeline_cache.get_bind_group_layout(&pipelines.hash_bind_group_layout_desc);
-        let bitonic_layout =
-            pipeline_cache.get_bind_group_layout(&pipelines.bitonic_bind_group_layout_desc);
-        let cell_ranges_layout =
-            pipeline_cache.get_bind_group_layout(&pipelines.cell_ranges_bind_group_layout_desc);
-        let collision_layout =
-            pipeline_cache.get_bind_group_layout(&pipelines.collision_bind_group_layout_desc);
-        let integrate_layout =
-            pipeline_cache.get_bind_group_layout(&pipelines.integrate_bind_group_layout_desc);
+        // パイプラインキャッシュから用途別バインドグループレイアウトを取得
+        let params_layout =
+            pipeline_cache.get_bind_group_layout(&pipelines.params_bind_group_layout_desc);
+        let particles_layout =
+            pipeline_cache.get_bind_group_layout(&pipelines.particles_bind_group_layout_desc);
+        let spatial_layout =
+            pipeline_cache.get_bind_group_layout(&pipelines.spatial_bind_group_layout_desc);
+        let contact_layout =
+            pipeline_cache.get_bind_group_layout(&pipelines.contact_bind_group_layout_desc);
 
-        // Hash (A -> keys / B -> keys)
-        let hash_forward = render_device.create_bind_group(
-            Some("gpu_physics_hash_bind_group_forward"),
-            &hash_layout,
-            &BindGroupEntries::sequential((
-                buffers.params.as_entire_binding(),
-                buffers.forward_in().as_entire_binding(),
-                buffers.keys.as_entire_binding(),
-                buffers.particle_ids.as_entire_binding(),
-            )),
-        );
-        let hash_reverse = render_device.create_bind_group(
-            Some("gpu_physics_hash_bind_group_reverse"),
-            &hash_layout,
-            &BindGroupEntries::sequential((
-                buffers.params.as_entire_binding(),
-                buffers.reverse_in().as_entire_binding(),
-                buffers.keys.as_entire_binding(),
-                buffers.particle_ids.as_entire_binding(),
-            )),
+        // Params
+        let params = render_device.create_bind_group(
+            Some("gpu_physics_params_bind_group"),
+            &params_layout,
+            &BindGroupEntries::sequential((buffers.params.as_entire_binding(),)),
         );
 
-        // Bitonic (keys / ids)
-        let bitonic = render_device.create_bind_group(
-            Some("gpu_physics_bitonic_bind_group"),
-            &bitonic_layout,
+        // Particles (Forward/Reverse)
+        let particles_forward = render_device.create_bind_group(
+            Some("gpu_physics_particles_bind_group_forward"),
+            &particles_layout,
             &BindGroupEntries::sequential((
-                buffers.keys.as_entire_binding(),
-                buffers.particle_ids.as_entire_binding(),
-            )),
-        );
-
-        // Cell ranges (params / keys / ranges)
-        let cell_ranges = render_device.create_bind_group(
-            Some("gpu_physics_cell_ranges_bind_group"),
-            &cell_ranges_layout,
-            &BindGroupEntries::sequential((
-                buffers.params.as_entire_binding(),
-                buffers.keys.as_entire_binding(),
-                buffers.cell_ranges.as_entire_binding(),
-            )),
-        );
-
-        // Collision (in / keys / ids / ranges / forces / torques)
-        let collision_forward = render_device.create_bind_group(
-            Some("gpu_physics_collision_bind_group_forward"),
-            &collision_layout,
-            &BindGroupEntries::sequential((
-                buffers.params.as_entire_binding(),
-                buffers.forward_in().as_entire_binding(),
-                buffers.keys.as_entire_binding(),
-                buffers.particle_ids.as_entire_binding(),
-                buffers.cell_ranges.as_entire_binding(),
-                buffers.forces.as_entire_binding(),
-                buffers.torques.as_entire_binding(),
-            )),
-        );
-        let collision_reverse = render_device.create_bind_group(
-            Some("gpu_physics_collision_bind_group_reverse"),
-            &collision_layout,
-            &BindGroupEntries::sequential((
-                buffers.params.as_entire_binding(),
-                buffers.reverse_in().as_entire_binding(),
-                buffers.keys.as_entire_binding(),
-                buffers.particle_ids.as_entire_binding(),
-                buffers.cell_ranges.as_entire_binding(),
-                buffers.forces.as_entire_binding(),
-                buffers.torques.as_entire_binding(),
-            )),
-        );
-
-        // Integrate (in / out / forces / torques)
-        let integrate_forward = render_device.create_bind_group(
-            Some("gpu_physics_integrate_bind_group_forward"),
-            &integrate_layout,
-            &BindGroupEntries::sequential((
-                buffers.params.as_entire_binding(),
                 buffers.forward_in().as_entire_binding(),
                 buffers.forward_out().as_entire_binding(),
-                buffers.forces.as_entire_binding(),
-                buffers.torques.as_entire_binding(),
             )),
         );
-        let integrate_reverse = render_device.create_bind_group(
-            Some("gpu_physics_integrate_bind_group_reverse"),
-            &integrate_layout,
+        let particles_reverse = render_device.create_bind_group(
+            Some("gpu_physics_particles_bind_group_reverse"),
+            &particles_layout,
             &BindGroupEntries::sequential((
-                buffers.params.as_entire_binding(),
                 buffers.reverse_in().as_entire_binding(),
                 buffers.reverse_out().as_entire_binding(),
+            )),
+        );
+
+        // Spatial (keys / ids / cell_ranges)
+        let spatial = render_device.create_bind_group(
+            Some("gpu_physics_spatial_bind_group"),
+            &spatial_layout,
+            &BindGroupEntries::sequential((
+                buffers.keys.as_entire_binding(),
+                buffers.particle_ids.as_entire_binding(),
+                buffers.cell_ranges.as_entire_binding(),
+            )),
+        );
+
+        // Contact (forces / torques)
+        let contact = render_device.create_bind_group(
+            Some("gpu_physics_contact_bind_group"),
+            &contact_layout,
+            &BindGroupEntries::sequential((
                 buffers.forces.as_entire_binding(),
                 buffers.torques.as_entire_binding(),
             )),
         );
 
         self.bind_groups = Some(GpuPhysicsBindGroups {
-            hash: [hash_forward, hash_reverse],
-            bitonic,
-            cell_ranges,
-            collision: [collision_forward, collision_reverse],
-            integrate: [integrate_forward, integrate_reverse],
+            params,
+            particles: [particles_forward, particles_reverse],
+            spatial,
+            contact,
         });
     }
 
@@ -268,17 +215,16 @@ impl Node for GpuPhysicsNode {
 
         let encoder = render_context.command_encoder();
 
-        let run_neighbor_search =
-            |encoder: &mut CommandEncoder,
-             hash_bind_group: &BindGroup,
-             bitonic_bind_group: &BindGroup,
-             cell_ranges_bind_group: &BindGroup| {
-                // CPU 実装の clear_forces/build_spatial_grid に合わせて
-                // half-step ごとにグリッド/力バッファを再計算する。
-                encoder.clear_buffer(&buffers.cell_ranges, 0, None);
-                encoder.clear_buffer(&buffers.forces, 0, None);
-                encoder.clear_buffer(&buffers.torques, 0, None);
+        let clear_neighbor_and_contact_buffers = |encoder: &mut CommandEncoder| {
+            // CPU 実装の clear_forces/build_spatial_grid に合わせて
+            // half-step ごとにグリッド/力バッファをクリアする。
+            encoder.clear_buffer(&buffers.cell_ranges, 0, None);
+            encoder.clear_buffer(&buffers.forces, 0, None);
+            encoder.clear_buffer(&buffers.torques, 0, None);
+        };
 
+        let run_neighbor_search =
+            |encoder: &mut CommandEncoder, particles_bind_group: &BindGroup| {
                 // Pass 1: Hash Keys
                 {
                     let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
@@ -286,7 +232,9 @@ impl Node for GpuPhysicsNode {
                         timestamp_writes: None,
                     });
                     pass.set_pipeline(hash_keys_pipeline);
-                    pass.set_bind_group(0, hash_bind_group, &[]);
+                    pass.set_bind_group(0, &bind_groups.params, &[]);
+                    pass.set_bind_group(1, particles_bind_group, &[]);
+                    pass.set_bind_group(2, &bind_groups.spatial, &[]);
                     pass.dispatch_workgroups(workgroups_sort_64, 1, 1);
                 }
 
@@ -304,7 +252,7 @@ impl Node for GpuPhysicsNode {
                                 timestamp_writes: None,
                             });
                             pass.set_pipeline(bitonic_sort_pipeline);
-                            pass.set_bind_group(0, bitonic_bind_group, &[]);
+                            pass.set_bind_group(0, &bind_groups.spatial, &[]);
                             pass.set_push_constants(0, push_constant_bytes);
                             pass.dispatch_workgroups(workgroups_sort_256, 1, 1);
                             j /= 2;
@@ -320,49 +268,49 @@ impl Node for GpuPhysicsNode {
                         timestamp_writes: None,
                     });
                     pass.set_pipeline(cell_ranges_pipeline);
-                    pass.set_bind_group(0, cell_ranges_bind_group, &[]);
+                    pass.set_bind_group(0, &bind_groups.params, &[]);
+                    pass.set_bind_group(1, &bind_groups.spatial, &[]);
                     pass.dispatch_workgroups(workgroups_particles_64, 1, 1);
                 }
             };
 
-        let run_collision = |encoder: &mut CommandEncoder, bind_group: &BindGroup| {
+        let run_collision = |encoder: &mut CommandEncoder, particles_bind_group: &BindGroup| {
             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
                 label: Some("collision_pass"),
                 timestamp_writes: None,
             });
             pass.set_pipeline(collision_pipeline);
-            pass.set_bind_group(0, bind_group, &[]);
+            pass.set_bind_group(0, &bind_groups.params, &[]);
+            pass.set_bind_group(1, particles_bind_group, &[]);
+            pass.set_bind_group(2, &bind_groups.spatial, &[]);
+            pass.set_bind_group(3, &bind_groups.contact, &[]);
             pass.dispatch_workgroups(workgroups_particles_64, 1, 1);
         };
 
         let run_integrate = |encoder: &mut CommandEncoder,
-                             bind_group: &BindGroup,
+                             particles_bind_group: &BindGroup,
                              integrate_pipeline: &ComputePipeline| {
             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
                 label: Some("integrate_pass"),
                 timestamp_writes: None,
             });
             pass.set_pipeline(integrate_pipeline);
-            pass.set_bind_group(0, bind_group, &[]);
+            pass.set_bind_group(0, &bind_groups.params, &[]);
+            pass.set_bind_group(1, particles_bind_group, &[]);
+            pass.set_bind_group(2, &bind_groups.contact, &[]);
             pass.dispatch_workgroups(workgroups_particles_64, 1, 1);
         };
 
         let dispatch_half_step =
             |encoder: &mut CommandEncoder,
-             hash_bind_group: &BindGroup,
-             collision_bind_group: &BindGroup,
-             integrate_bind_group: &BindGroup,
+             particles_bind_group: &BindGroup,
              integrate_pipeline: &ComputePipeline| {
                 // CPU と同じ順序:
                 // 近傍探索 -> 衝突/接触力 -> 積分
-                run_neighbor_search(
-                    encoder,
-                    hash_bind_group,
-                    &bind_groups.bitonic,
-                    &bind_groups.cell_ranges,
-                );
-                run_collision(encoder, collision_bind_group);
-                run_integrate(encoder, integrate_bind_group, integrate_pipeline);
+                clear_neighbor_and_contact_buffers(encoder);
+                run_neighbor_search(encoder, particles_bind_group);
+                run_collision(encoder, particles_bind_group);
+                run_integrate(encoder, particles_bind_group, integrate_pipeline);
             };
 
         // 1サブステップ:
@@ -385,18 +333,14 @@ impl Node for GpuPhysicsNode {
             // 前半（A -> B）
             dispatch_half_step(
                 encoder,
-                &bind_groups.hash[0],
-                &bind_groups.collision[0],
-                &bind_groups.integrate[0],
+                &bind_groups.particles[0],
                 integrate_first_half_pipeline,
             );
 
             // 後半（B -> A）。サブステップ完了時の最新状態は常に A 側。
             dispatch_half_step(
                 encoder,
-                &bind_groups.hash[1],
-                &bind_groups.collision[1],
-                &bind_groups.integrate[1],
+                &bind_groups.particles[1],
                 integrate_second_half_pipeline,
             );
         }
