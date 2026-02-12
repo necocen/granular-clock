@@ -508,7 +508,7 @@ fn prepare_particle_instances(
             return;
         };
 
-        // Create bind group fresh each frame (physics buffers swap each frame)
+        // 物理計算結果（最新状態は固定で A スロット）を毎フレーム参照する。
         let bind_group_layout = pipeline.get_bind_group_layout(0);
         let bind_group_layout: BindGroupLayout = bind_group_layout.clone().into();
 
@@ -518,7 +518,7 @@ fn prepare_particle_instances(
             &[
                 BindGroupEntry {
                     binding: 0,
-                    resource: physics_buffers.current_output().as_entire_binding(),
+                    resource: physics_buffers.latest_particles().as_entire_binding(),
                 },
                 BindGroupEntry {
                     binding: 1,

@@ -135,10 +135,10 @@ pub struct CellRange {
 /// GPU バッファリソース
 #[derive(Resource)]
 pub struct GpuPhysicsBuffers {
-    /// 粒子データ（入力）
-    pub particles_in: Buffer,
-    /// 粒子データ（出力）
-    pub particles_out: Buffer,
+    /// 粒子データ A（各サブステップ後の最終結果スロット）
+    pub particles_a: Buffer,
+    /// 粒子データ B（中間スロット）
+    pub particles_b: Buffer,
     /// 空間ハッシュキー
     pub keys: Buffer,
     /// 粒子ID（ソート用）
@@ -155,8 +155,6 @@ pub struct GpuPhysicsBuffers {
     pub num_particles: u32,
     /// バッファ容量（粒子スロット数）
     pub capacity: u32,
-    /// ping-pong フラグ
-    pub ping_pong: bool,
     /// 最後にアップロードしたデータ世代
     pub last_uploaded_generation: u64,
 }
@@ -166,15 +164,15 @@ impl GpuPhysicsBuffers {
         let particle_size = std::mem::size_of::<ParticleGpu>() as u64;
         let particles_buffer_size = particle_size * num_particles as u64;
 
-        let particles_in = render_device.create_buffer(&BufferDescriptor {
-            label: Some("particles_in"),
+        let particles_a = render_device.create_buffer(&BufferDescriptor {
+            label: Some("particles_a"),
             size: particles_buffer_size,
             usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
-        let particles_out = render_device.create_buffer(&BufferDescriptor {
-            label: Some("particles_out"),
+        let particles_b = render_device.create_buffer(&BufferDescriptor {
+            label: Some("particles_b"),
             size: particles_buffer_size,
             usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
             mapped_at_creation: false,
@@ -224,8 +222,8 @@ impl GpuPhysicsBuffers {
         });
 
         Self {
-            particles_in,
-            particles_out,
+            particles_a,
+            particles_b,
             keys,
             particle_ids,
             cell_ranges,
@@ -234,24 +232,32 @@ impl GpuPhysicsBuffers {
             params,
             num_particles,
             capacity: num_particles,
-            ping_pong: false,
             last_uploaded_generation: 0,
         }
     }
 
-    /// ping-pong バッファを入れ替え
-    pub fn swap(&mut self) {
-        std::mem::swap(&mut self.particles_in, &mut self.particles_out);
-        self.ping_pong = !self.ping_pong;
+    /// Velocity Verlet 前半の入力（A）を取得
+    pub fn forward_in(&self) -> &Buffer {
+        &self.particles_a
     }
 
-    /// 現在の入力バッファを取得
-    pub fn current_input(&self) -> &Buffer {
-        &self.particles_in
+    /// Velocity Verlet 前半の出力（B）を取得
+    pub fn forward_out(&self) -> &Buffer {
+        &self.particles_b
     }
 
-    /// 現在の出力バッファを取得
-    pub fn current_output(&self) -> &Buffer {
-        &self.particles_out
+    /// Velocity Verlet 後半の入力（B）を取得
+    pub fn reverse_in(&self) -> &Buffer {
+        &self.particles_b
+    }
+
+    /// Velocity Verlet 後半の出力（A）を取得
+    pub fn reverse_out(&self) -> &Buffer {
+        &self.particles_a
+    }
+
+    /// 最新の粒子状態（A）を取得
+    pub fn latest_particles(&self) -> &Buffer {
+        &self.particles_a
     }
 }

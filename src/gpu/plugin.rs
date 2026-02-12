@@ -284,7 +284,8 @@ fn update_simulation_time(
     }
 }
 
-/// GPU バッファを準備・更新（初回のみ粒子データ、毎フレームパラメータ）
+/// GPU バッファを準備・更新（再確保と、世代変更時の粒子データアップロード）
+/// フレームごとの params 更新は `update_params_only` が担当する。
 fn prepare_gpu_buffers(
     gpu_data: Res<GpuParticleData>,
     render_device: Res<RenderDevice>,
@@ -340,17 +341,18 @@ fn prepare_gpu_buffers(
     }
 
     // 世代が変わった場合（初回またはReset後）に粒子データを GPU に転送
-    // 注: particles_out に書き込む。node.update() でスワップされた後、
-    // particles_in として読み取られるため。
+    // A/B 固定スロット運用のため、両方へ同一データを書き込む。
     if !gpu_data.particles.is_empty() && buffers.last_uploaded_generation != gpu_data.generation {
         let particle_bytes = bytemuck::cast_slice(&gpu_data.particles);
-        render_queue.write_buffer(&buffers.particles_out, 0, particle_bytes);
+        render_queue.write_buffer(&buffers.particles_a, 0, particle_bytes);
+        render_queue.write_buffer(&buffers.particles_b, 0, particle_bytes);
         buffers.num_particles = num_particles;
         buffers.last_uploaded_generation = gpu_data.generation;
     }
 }
 
-/// パラメータのみ毎フレーム更新（振動オフセット等）
+/// 共通パラメータをフレーム単位で更新する。
+/// サブステップごとの container_offset 上書きは node.run 側が担当する。
 fn update_params_only(
     gpu_data: Res<GpuParticleData>,
     container_params: Res<ExtractedContainerParams>,
@@ -365,7 +367,7 @@ fn update_params_only(
         return;
     }
 
-    // パラメータを更新（振動オフセットを反映）
+    // フレーム基準の container_offset を反映（サブステップ内で node が上書き）。
     let mut params = gpu_data.params;
     params.container_offset = container_params.container_offset;
 
@@ -412,7 +414,7 @@ fn copy_to_staging(
         label: Some("readback_copy_encoder"),
     });
 
-    encoder.copy_buffer_to_buffer(buffers.current_output(), 0, &staging.buffer, 0, copy_size);
+    encoder.copy_buffer_to_buffer(buffers.latest_particles(), 0, &staging.buffer, 0, copy_size);
 
     render_queue.submit([encoder.finish()]);
 

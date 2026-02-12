@@ -9,13 +9,8 @@ struct SortParams {
     n: u32,
 }
 
-@group(0) @binding(0) var<uniform> params: Params;
-@group(0) @binding(1) var<storage, read> particles_in: array<Particle>;
-@group(0) @binding(2) var<storage, read_write> particles_out: array<Particle>;
-@group(0) @binding(3) var<storage, read_write> keys: array<u32>;
-@group(0) @binding(4) var<storage, read_write> particle_ids: array<u32>;
-@group(0) @binding(5) var<storage, read_write> cell_ranges: array<vec2<u32>>;
-@group(0) @binding(6) var<storage, read_write> forces: array<vec4<f32>>;
+@group(0) @binding(0) var<storage, read_write> keys: array<u32>;
+@group(0) @binding(1) var<storage, read_write> particle_ids: array<u32>;
 
 var<push_constant> sort_params: SortParams;
 
