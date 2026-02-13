@@ -4,11 +4,11 @@ use crate::gpu::buffers::{ParticleGpu, SimulationParams};
 use bevy::prelude::Vec3;
 use std::collections::HashMap;
 
+use crate::physics::compute_wall_contact_force as compute_wall_contact_force_core;
 use crate::physics::{
     clamp_to_container, clamp_velocity, compute_particle_contact_force, integrate_first_half,
     integrate_second_half, ContactState, MaterialProperties, WallContactForce, WallProperties,
 };
-use crate::physics::compute_wall_contact_force as compute_wall_contact_force_core;
 use crate::simulation::ContainerParams;
 
 #[derive(Clone)]

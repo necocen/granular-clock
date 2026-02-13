@@ -1,8 +1,7 @@
 use bevy::prelude::*;
 
 use crate::physics::collision::{
-    compute_wall_contact_force as compute_wall_contact_force_core, WallContactForce,
-    WallProperties,
+    compute_wall_contact_force as compute_wall_contact_force_core, WallContactForce, WallProperties,
 };
 use crate::physics::contact::{compute_particle_contact_force, ContactState, MaterialProperties};
 use crate::physics::integrator::{

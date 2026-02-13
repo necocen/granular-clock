@@ -54,16 +54,13 @@ pub fn oscillation_displacement(amplitude: f32, phase: f32) -> f32 {
 }
 
 /// 振動位相を 1 ステップ進め、コンテナオフセットを更新する（CPU/GPU 共通）。
-pub fn advance_oscillation(
-    sim_state: &mut SimulationState,
-    params: &OscillationParams,
-    dt: f32,
-) {
+pub fn advance_oscillation(sim_state: &mut SimulationState, params: &OscillationParams, dt: f32) {
     // 振動無効時は「現在位置で停止」させる（オフセットを維持する）。
     if !params.enabled {
         return;
     }
 
     advance_oscillation_phase(&mut sim_state.oscillation_phase, params.frequency, dt);
-    sim_state.container_offset = oscillation_displacement(params.amplitude, sim_state.oscillation_phase);
+    sim_state.container_offset =
+        oscillation_displacement(params.amplitude, sim_state.oscillation_phase);
 }

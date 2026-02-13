@@ -2,10 +2,9 @@ use bevy::prelude::*;
 use std::collections::HashMap;
 
 use crate::physics::{
-    clamp_to_container, clamp_velocity, compute_particle_contact_force,
-    compute_wall_contact_force, integrate_first_half, integrate_second_half,
-    ContactHistory, MaterialProperties, ParticleStore, PhysicsConstants, SpatialHashGrid,
-    WallProperties,
+    clamp_to_container, clamp_velocity, compute_particle_contact_force, compute_wall_contact_force,
+    integrate_first_half, integrate_second_half, ContactHistory, MaterialProperties, ParticleStore,
+    PhysicsConstants, SpatialHashGrid, WallProperties,
 };
 
 use super::{
@@ -131,11 +130,7 @@ fn compute_wall_collisions(
 }
 
 /// 位置の積分（Velocity Verlet 前半ステップ）
-fn integrate_positions(
-    particles: &mut ParticleStore,
-    physics: &PhysicsConstants,
-    dt: f32,
-) {
+fn integrate_positions(particles: &mut ParticleStore, physics: &PhysicsConstants, dt: f32) {
     let gravity = physics.gravity;
 
     for p in particles.particles.iter_mut() {
@@ -154,11 +149,7 @@ fn integrate_positions(
 }
 
 /// 速度の積分（Velocity Verlet 後半ステップ）
-fn integrate_velocities(
-    particles: &mut ParticleStore,
-    physics: &PhysicsConstants,
-    dt: f32,
-) {
+fn integrate_velocities(particles: &mut ParticleStore, physics: &PhysicsConstants, dt: f32) {
     let gravity = physics.gravity;
 
     for p in particles.particles.iter_mut() {
@@ -241,7 +232,11 @@ pub fn run_physics_substeps(world: &mut World) {
             &wall_props,
         );
         integrate_positions(&mut particles, &physics, time_params.dt);
-        clamp_particles(&mut particles, &container_params, sim_state.container_offset);
+        clamp_particles(
+            &mut particles,
+            &container_params,
+            sim_state.container_offset,
+        );
         // 後半ステップの力計算は更新後の位置に対して行う
         build_spatial_grid(grid, &particles);
         clear_forces(&mut particles);
@@ -259,7 +254,11 @@ pub fn run_physics_substeps(world: &mut World) {
             &wall_props,
         );
         integrate_velocities(&mut particles, &physics, time_params.dt);
-        clamp_particles(&mut particles, &container_params, sim_state.container_offset);
+        clamp_particles(
+            &mut particles,
+            &container_params,
+            sim_state.container_offset,
+        );
         contact_history.cleanup();
         sim_state.step_time(time_params.dt);
     }

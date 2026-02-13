@@ -172,7 +172,7 @@ fn update_oscillation_for_gpu(
     params: Res<OscillationParams>,
     time_params: Res<SimulationTimeParams>,
     settings: Res<SimulationSettings>,
- ) {
+) {
     if sim_state.paused {
         return;
     }
