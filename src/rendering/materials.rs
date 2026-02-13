@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::physics::{ParticleSize, ParticleStore};
-use crate::simulation::{ContainerParams, SimulationConfig, SimulationState};
+use crate::simulation::{constants::SimulationConstants, state::SimulationState};
 
 /// 粒子用のメッシュハンドル
 #[derive(Resource)]
@@ -21,8 +21,10 @@ pub fn setup_rendering(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    container: Res<ContainerParams>,
+    constants: Res<SimulationConstants>,
 ) {
+    let container = &constants.container;
+
     // 粒子用の球メッシュ（低ポリゴン）
     let sphere_mesh = meshes.add(Sphere::new(1.0).mesh().ico(2).unwrap());
 
@@ -135,9 +137,11 @@ pub fn setup_rendering(
 /// 粒子をスポーン（ParticleStore に追加するだけ。ECS エンティティは作らない）
 pub fn spawn_particles(
     mut store: ResMut<ParticleStore>,
-    config: Res<SimulationConfig>,
-    container: Res<ContainerParams>,
+    constants: Res<SimulationConstants>,
 ) {
+    let config = &constants.config;
+    let container = &constants.container;
+
     use rand::Rng;
     let mut rng = rand::rng();
 
@@ -176,11 +180,13 @@ pub fn spawn_particles(
 
 /// コンテナの位置を更新
 pub fn update_container_transforms(
-    container: Res<ContainerParams>,
+    constants: Res<SimulationConstants>,
     sim_state: Res<SimulationState>,
     mut transforms: Query<&mut Transform>,
     entities: Option<Res<ContainerEntities>>,
 ) {
+    let container = &constants.container;
+
     let Some(entities) = entities else {
         return;
     };

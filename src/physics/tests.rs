@@ -3,9 +3,9 @@ use bevy::prelude::*;
 use crate::physics::{
     clamp_to_container, clamp_velocity, compute_particle_contact_force,
     compute_wall_contact_force as compute_wall_contact_force_core, integrate_first_half,
-    integrate_second_half, ContactState, MaterialProperties, WallContactForce, WallProperties,
+    integrate_second_half, ContactState, WallContactForce,
 };
-use crate::simulation::ContainerParams;
+use crate::simulation::constants::{ContainerParams, MaterialProperties, WallProperties};
 
 #[derive(Clone)]
 struct Container {
@@ -497,7 +497,7 @@ fn test_particle_stays_in_container() {
 /// 複数粒子の初期配置から時間発展しても箱から飛び出さないことをテスト
 #[test]
 fn test_multiple_particles_stay_in_container() {
-    use crate::simulation::SimulationConfig;
+    use crate::simulation::constants::SimulationConfig;
     use rand::Rng;
     use std::f32::consts::PI;
 
@@ -779,7 +779,7 @@ fn test_multiple_particles_stay_in_container() {
 /// コンテナサイズと粒子数の関係をテスト
 #[test]
 fn test_container_capacity() {
-    use crate::simulation::SimulationConfig;
+    use crate::simulation::constants::SimulationConfig;
     use std::f32::consts::PI;
 
     let container = Container::default();

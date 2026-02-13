@@ -1,14 +1,17 @@
 use bevy::prelude::*;
 use std::collections::HashMap;
 
-use crate::physics::{
+use crate::physics::cpu::{
     clamp_to_container, clamp_velocity, compute_particle_contact_force, compute_wall_contact_force,
-    integrate_first_half, integrate_second_half, ContactHistory, MaterialProperties, ParticleStore,
-    PhysicsConstants, SpatialHashGrid, WallProperties,
+    integrate_first_half, integrate_second_half, ContactHistory, SpatialHashGrid,
 };
+use crate::physics::ParticleStore;
 use crate::simulation::{
-    advance_oscillation, ContainerParams, OscillationParams, SimulationSettings, SimulationState,
-    SimulationTimeParams,
+    constants::{
+        advance_oscillation, ContainerParams, MaterialProperties, PhysicsConstants,
+        SimulationConstants, WallProperties,
+    },
+    state::SimulationState,
 };
 
 /// 空間ハッシュグリッドを構築
@@ -197,76 +200,54 @@ pub fn run_physics_substeps(world: &mut World) {
         return;
     }
 
-    let substeps = world.resource::<SimulationSettings>().substeps_per_frame;
+    let constants = world.resource::<SimulationConstants>().clone();
+    let substeps = constants.settings.substeps_per_frame;
 
     // リソースを一括取り出し（exclusive system なので安全）
     let mut particles = world.remove_resource::<ParticleStore>().unwrap();
     let mut contact_history = world.remove_resource::<ContactHistory>().unwrap();
-    let container_params = world.remove_resource::<ContainerParams>().unwrap();
-    let osc_params = world.remove_resource::<OscillationParams>().unwrap();
     let mut sim_state = world.remove_resource::<SimulationState>().unwrap();
-    let time_params = world.remove_resource::<SimulationTimeParams>().unwrap();
 
     // 不変リソースはコピー（Copy 型なので安全かつ参照の衝突を回避）
     let grid = world.resource::<SpatialHashGrid>();
-    let material = *world.resource::<MaterialProperties>();
-    let physics = *world.resource::<PhysicsConstants>();
-    let wall_props = *world.resource::<WallProperties>();
+    let material = constants.material;
+    let physics = constants.physics;
+    let wall_props = constants.wall;
+    let container_params = &constants.container;
+    let osc_params = &constants.oscillation;
+    let dt = constants.time.dt;
 
     for _ in 0..substeps {
-        advance_oscillation(&mut sim_state, &osc_params, time_params.dt);
+        advance_oscillation(&mut sim_state, osc_params, dt);
         build_spatial_grid(grid, &particles);
         clear_forces(&mut particles);
-        compute_particle_collisions(
-            &mut particles,
-            grid,
-            &mut contact_history,
-            &material,
-            time_params.dt,
-        );
+        compute_particle_collisions(&mut particles, grid, &mut contact_history, &material, dt);
         compute_wall_collisions(
             &mut particles,
-            &container_params,
+            container_params,
             sim_state.container_offset,
             &wall_props,
         );
-        integrate_positions(&mut particles, &physics, time_params.dt);
-        clamp_particles(
-            &mut particles,
-            &container_params,
-            sim_state.container_offset,
-        );
+        integrate_positions(&mut particles, &physics, dt);
+        clamp_particles(&mut particles, container_params, sim_state.container_offset);
         // 後半ステップの力計算は更新後の位置に対して行う
         build_spatial_grid(grid, &particles);
         clear_forces(&mut particles);
-        compute_particle_collisions(
-            &mut particles,
-            grid,
-            &mut contact_history,
-            &material,
-            time_params.dt,
-        );
+        compute_particle_collisions(&mut particles, grid, &mut contact_history, &material, dt);
         compute_wall_collisions(
             &mut particles,
-            &container_params,
+            container_params,
             sim_state.container_offset,
             &wall_props,
         );
-        integrate_velocities(&mut particles, &physics, time_params.dt);
-        clamp_particles(
-            &mut particles,
-            &container_params,
-            sim_state.container_offset,
-        );
+        integrate_velocities(&mut particles, &physics, dt);
+        clamp_particles(&mut particles, container_params, sim_state.container_offset);
         contact_history.cleanup();
-        sim_state.step_time(time_params.dt);
+        sim_state.step_time(dt);
     }
 
     // リソースを戻す
     world.insert_resource(particles);
     world.insert_resource(contact_history);
-    world.insert_resource(container_params);
-    world.insert_resource(osc_params);
     world.insert_resource(sim_state);
-    world.insert_resource(time_params);
 }

@@ -19,13 +19,13 @@ use crate::{
         is_gpu_backend, normalized_instance_capacity, InstanceBuffer, ParticleBatchMarker,
         RenderInstanceBufferResource, LARGE_PARTICLE_COLOR, SMALL_PARTICLE_COLOR,
     },
-    simulation::{PhysicsBackend, SimulationConfig},
+    simulation::constants::{PhysicsBackend, SimulationConstants},
 };
 
 use super::{buffers::GpuPhysicsBuffers, node::GpuPhysicsLabel};
 
-impl ExtractResource for SimulationConfig {
-    type Source = SimulationConfig;
+impl ExtractResource for SimulationConstants {
+    type Source = SimulationConstants;
 
     fn extract_resource(source: &Self::Source) -> Self {
         source.clone()
@@ -129,9 +129,10 @@ impl Node for GpuInstanceWriteNode {
             return;
         }
 
-        let Some(config) = world.get_resource::<SimulationConfig>() else {
+        let Some(constants) = world.get_resource::<SimulationConstants>() else {
             return;
         };
+        let config = &constants.config;
         let total = config.num_large + config.num_small;
         if total == 0 {
             return;
@@ -238,7 +239,7 @@ pub struct GpuInstanceWriterPlugin;
 
 impl Plugin for GpuInstanceWriterPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(ExtractResourcePlugin::<SimulationConfig>::default());
+        app.add_plugins(ExtractResourcePlugin::<SimulationConstants>::default());
 
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
@@ -299,10 +300,11 @@ fn init_instance_writer_resources(
 fn prepare_gpu_instance_buffer(
     mut commands: Commands,
     render_device: Res<RenderDevice>,
-    config: Res<SimulationConfig>,
+    constants: Res<SimulationConstants>,
     instance_buffer: Option<ResMut<RenderInstanceBufferResource>>,
     batch_query: Query<Entity, With<ParticleBatchMarker>>,
 ) {
+    let config = &constants.config;
     let instance_len = config.num_large + config.num_small;
 
     if instance_len > 0 {

@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use std::collections::HashMap;
 use std::f32::consts::PI;
 
-use crate::physics::shared::MaterialProperties;
+use crate::simulation::constants::MaterialProperties;
 
 /// 接触履歴
 #[derive(Default, Clone)]

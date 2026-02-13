@@ -26,7 +26,7 @@ impl Default for SimulationTimeParams {
 }
 
 /// シミュレーション設定
-#[derive(Resource)]
+#[derive(Resource, Clone, Copy)]
 pub struct SimulationSettings {
     /// 1フレームあたりのサブステップ数
     pub substeps_per_frame: u32,

@@ -10,12 +10,10 @@ use bevy::{
 };
 use std::sync::Arc;
 
-use crate::physics::{
-    MaterialProperties, ParticleSize, ParticleStore, PhysicsConstants, WallProperties,
-};
+use crate::physics::{ParticleSize, ParticleStore};
 use crate::simulation::{
-    advance_oscillation, ContainerParams, OscillationParams, PhysicsBackend, SimulationSettings,
-    SimulationState, SimulationTimeParams,
+    constants::{advance_oscillation, PhysicsBackend, SimulationConstants},
+    state::SimulationState,
 };
 
 use super::{
@@ -24,7 +22,6 @@ use super::{
     pipeline::GpuPhysicsPipelines,
     readback::{GpuReadbackBuffer, ReadbackSettings, ReadbackStaging},
 };
-use crate::physics::GridSettings;
 
 /// GPU 物理が有効かどうかのフラグ
 #[allow(dead_code)]
@@ -97,7 +94,6 @@ impl Plugin for GpuPhysicsPlugin {
         app.insert_resource(GpuParticleData::default())
             .insert_resource(GpuPhysicsEnabled(true))
             .insert_resource(ExtractedContainerParams::default())
-            .insert_resource(GridSettings::default())
             .insert_resource(ReadbackSettings::default())
             .insert_resource(readback_buffer)
             .add_plugins(ExtractResourcePlugin::<GpuParticleData>::default())
@@ -152,11 +148,13 @@ fn init_pipelines(
 
 /// コンテナのオフセットを更新
 fn update_container_params(
-    container_params: Res<ContainerParams>,
-    osc_params: Res<OscillationParams>,
+    constants: Res<SimulationConstants>,
     sim_state: Res<SimulationState>,
     mut params: ResMut<ExtractedContainerParams>,
 ) {
+    let container_params = &constants.container;
+    let osc_params = &constants.oscillation;
+
     // デフォルト（フレーム基準）オフセット。GPUノード側でサブステップごとに上書きする。
     params.container_offset = container_params.base_position.y + sim_state.container_offset;
     params.base_position_y = container_params.base_position.y;
@@ -169,17 +167,15 @@ fn update_container_params(
 /// GPU モード用: CPU と同じ位相更新ロジックで振動を進める。
 fn update_oscillation_for_gpu(
     mut sim_state: ResMut<SimulationState>,
-    params: Res<OscillationParams>,
-    time_params: Res<SimulationTimeParams>,
-    settings: Res<SimulationSettings>,
+    constants: Res<SimulationConstants>,
 ) {
     if sim_state.paused {
         return;
     }
 
     sim_state.oscillation_frame_start_phase = sim_state.oscillation_phase;
-    for _ in 0..settings.substeps_per_frame {
-        advance_oscillation(&mut sim_state, &params, time_params.dt);
+    for _ in 0..constants.settings.substeps_per_frame {
+        advance_oscillation(&mut sim_state, &constants.oscillation, constants.time.dt);
     }
 }
 
@@ -187,13 +183,8 @@ fn update_oscillation_for_gpu(
 #[allow(clippy::too_many_arguments)]
 fn extract_particle_data(
     store: Res<ParticleStore>,
-    container_params: Res<ContainerParams>,
+    constants: Res<SimulationConstants>,
     sim_state: Res<SimulationState>,
-    time_params: Res<SimulationTimeParams>,
-    material: Res<MaterialProperties>,
-    wall_props: Res<WallProperties>,
-    physics: Res<PhysicsConstants>,
-    grid_settings: Res<GridSettings>,
     backend: Res<PhysicsBackend>,
     mut gpu_data: ResMut<GpuParticleData>,
 ) {
@@ -233,6 +224,13 @@ fn extract_particle_data(
     }
 
     // パラメータを更新（各種リソースから値を取得）
+    let container_params = &constants.container;
+    let time_params = constants.time;
+    let material = constants.material;
+    let wall_props = constants.wall;
+    let physics = constants.physics;
+    let grid_settings = constants.grid;
+
     let world_half = [
         container_params.half_extents.x,
         container_params.half_extents.y,
@@ -273,13 +271,12 @@ fn extract_particle_data(
 fn update_simulation_time(
     mut gpu_data: ResMut<GpuParticleData>,
     mut sim_state: ResMut<SimulationState>,
-    time_params: Res<SimulationTimeParams>,
-    settings: Res<SimulationSettings>,
+    constants: Res<SimulationConstants>,
     backend: Res<PhysicsBackend>,
 ) {
     // paused 状態と substeps を GpuParticleData に同期（Render World に伝搬）
     gpu_data.paused = sim_state.paused;
-    gpu_data.substeps = settings.substeps_per_frame;
+    gpu_data.substeps = constants.settings.substeps_per_frame;
 
     // CPU モードでは run_physics_substeps が時間を進めるので、ここでは何もしない
     if *backend != PhysicsBackend::Gpu {
@@ -293,8 +290,8 @@ fn update_simulation_time(
 
     // GPU物理が初期化済みの場合、サブステップ数分だけシミュレーション時間を進める
     if gpu_data.initialized {
-        for _ in 0..settings.substeps_per_frame {
-            sim_state.step_time(time_params.dt);
+        for _ in 0..constants.settings.substeps_per_frame {
+            sim_state.step_time(constants.time.dt);
         }
     }
 }

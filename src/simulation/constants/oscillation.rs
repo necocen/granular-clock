@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use std::f32::consts::PI;
 
-use super::SimulationState;
+use crate::simulation::state::SimulationState;
 
 const TWO_PI: f32 = 2.0 * PI;
 

@@ -5,7 +5,7 @@ use bevy::{
     render::extract_resource::{ExtractResource, ExtractResourcePlugin},
 };
 
-use crate::simulation::PhysicsBackend;
+use crate::simulation::constants::PhysicsBackend;
 
 impl ExtractResource for PhysicsBackend {
     type Source = PhysicsBackend;

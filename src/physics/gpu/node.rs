@@ -1,4 +1,4 @@
-use crate::simulation::{advance_oscillation_phase, oscillation_displacement};
+use crate::simulation::constants::{advance_oscillation_phase, oscillation_displacement};
 use bevy::{
     prelude::*,
     render::{

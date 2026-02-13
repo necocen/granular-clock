@@ -4,8 +4,8 @@ use bevy::ui::Checked;
 use crate::analysis::DistributionHistory;
 use crate::physics::{ParticleSize, ParticleStore};
 use crate::simulation::{
-    ContainerParams, OscillationParams, PhysicsBackend, SimulationConfig, SimulationSettings,
-    SimulationState,
+    constants::{PhysicsBackend, SimulationConstants},
+    state::SimulationState,
 };
 
 use super::markers::*;
@@ -24,14 +24,14 @@ pub fn update_simulation_time_display(
 /// FPS とシミュレーション速度の表示を更新
 pub fn update_fps_display(
     time: Res<Time>,
-    settings: Res<SimulationSettings>,
+    constants: Res<SimulationConstants>,
     mut fps_text: Query<&mut Text, With<FpsText>>,
 ) {
     if let Ok(mut text) = fps_text.single_mut() {
         let dt = time.delta_secs();
         if dt > 0.0 {
             let fps = 1.0 / dt;
-            let sim_steps = fps * settings.substeps_per_frame as f32;
+            let sim_steps = fps * constants.settings.substeps_per_frame as f32;
             text.0 = format!("FPS: {:.0}  Sim: {:.0} steps/s", fps, sim_steps);
         }
     }
@@ -44,14 +44,14 @@ pub fn handle_oscillation_toggle(
         With<OscillationToggleButton>,
     >,
     mut checkmark: Query<&mut Visibility, With<OscillationCheckMark>>,
-    mut osc_params: ResMut<OscillationParams>,
+    mut constants: ResMut<SimulationConstants>,
     mut commands: Commands,
 ) {
     if let Ok(int) = interaction.single() {
         if *int == Interaction::Pressed {
             if let Ok((entity, mut bg, is_checked)) = toggle_btn.single_mut() {
                 let new_checked = !is_checked;
-                osc_params.enabled = new_checked;
+                constants.oscillation.enabled = new_checked;
 
                 if new_checked {
                     commands.entity(entity).insert(Checked);
@@ -109,27 +109,27 @@ pub fn handle_amplitude_buttons(
     up_btn: Query<&Interaction, (With<AmplitudeUpButton>, Changed<Interaction>)>,
     down_btn: Query<&Interaction, (With<AmplitudeDownButton>, Changed<Interaction>)>,
     mut amplitude_text: Query<&mut Text, With<AmplitudeText>>,
-    mut osc_params: ResMut<OscillationParams>,
+    mut constants: ResMut<SimulationConstants>,
 ) {
     let mut changed = false;
 
     if let Ok(int) = up_btn.single() {
         if *int == Interaction::Pressed {
-            osc_params.amplitude = (osc_params.amplitude + 0.001).min(0.1);
+            constants.oscillation.amplitude = (constants.oscillation.amplitude + 0.001).min(0.1);
             changed = true;
         }
     }
 
     if let Ok(int) = down_btn.single() {
         if *int == Interaction::Pressed {
-            osc_params.amplitude = (osc_params.amplitude - 0.001).max(0.001);
+            constants.oscillation.amplitude = (constants.oscillation.amplitude - 0.001).max(0.001);
             changed = true;
         }
     }
 
     if changed {
         if let Ok(mut text) = amplitude_text.single_mut() {
-            text.0 = format!("Amplitude: {:.3} m", osc_params.amplitude);
+            text.0 = format!("Amplitude: {:.3} m", constants.oscillation.amplitude);
         }
     }
 }
@@ -138,27 +138,27 @@ pub fn handle_frequency_buttons(
     up_btn: Query<&Interaction, (With<FrequencyUpButton>, Changed<Interaction>)>,
     down_btn: Query<&Interaction, (With<FrequencyDownButton>, Changed<Interaction>)>,
     mut frequency_text: Query<&mut Text, With<FrequencyText>>,
-    mut osc_params: ResMut<OscillationParams>,
+    mut constants: ResMut<SimulationConstants>,
 ) {
     let mut changed = false;
 
     if let Ok(int) = up_btn.single() {
         if *int == Interaction::Pressed {
-            osc_params.frequency = (osc_params.frequency + 1.0).min(20.0);
+            constants.oscillation.frequency = (constants.oscillation.frequency + 1.0).min(20.0);
             changed = true;
         }
     }
 
     if let Ok(int) = down_btn.single() {
         if *int == Interaction::Pressed {
-            osc_params.frequency = (osc_params.frequency - 1.0).max(1.0);
+            constants.oscillation.frequency = (constants.oscillation.frequency - 1.0).max(1.0);
             changed = true;
         }
     }
 
     if changed {
         if let Ok(mut text) = frequency_text.single_mut() {
-            text.0 = format!("Frequency: {:.1} Hz", osc_params.frequency);
+            text.0 = format!("Frequency: {:.1} Hz", constants.oscillation.frequency);
         }
     }
 }
@@ -215,9 +215,8 @@ pub fn update_button_colors(
 /// シミュレーションのリセットを処理
 pub fn handle_reset(
     mut sim_state: ResMut<SimulationState>,
-    config: Res<SimulationConfig>,
+    constants: Res<SimulationConstants>,
     mut store: ResMut<ParticleStore>,
-    container: Res<ContainerParams>,
 ) {
     if !sim_state.reset_requested {
         return;
@@ -232,6 +231,8 @@ pub fn handle_reset(
     // 新しい粒子をスポーン
     use rand::Rng;
     let mut rng = rand::rng();
+    let config = &constants.config;
+    let container = &constants.container;
 
     let spawn_area_x = container.half_extents.x - config.large_radius;
     let spawn_area_z = container.half_extents.z - config.large_radius;

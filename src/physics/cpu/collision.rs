@@ -1,7 +1,6 @@
 use bevy::prelude::*;
 
-use crate::physics::shared::WallProperties;
-use crate::simulation::ContainerParams;
+use crate::simulation::constants::{ContainerParams, WallProperties};
 
 /// 壁との接触力計算結果
 #[derive(Debug, Clone, Copy, Default)]

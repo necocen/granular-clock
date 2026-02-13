@@ -7,9 +7,9 @@ use std::collections::HashMap;
 use crate::physics::compute_wall_contact_force as compute_wall_contact_force_core;
 use crate::physics::{
     clamp_to_container, clamp_velocity, compute_particle_contact_force, integrate_first_half,
-    integrate_second_half, ContactState, MaterialProperties, WallContactForce, WallProperties,
+    integrate_second_half, ContactState, WallContactForce,
 };
-use crate::simulation::ContainerParams;
+use crate::simulation::constants::{ContainerParams, MaterialProperties, WallProperties};
 
 #[derive(Clone)]
 struct Container {
@@ -819,7 +819,7 @@ fn cpu_compute_contact_force(
     vel_q: [f32; 3],
     radius_q: f32,
     mass_q: f32,
-    material: &crate::physics::MaterialProperties,
+    material: &crate::simulation::constants::MaterialProperties,
 ) -> [f32; 3] {
     use bevy::math::Vec3;
     let mut contact_state = crate::physics::ContactState::default();
@@ -845,7 +845,7 @@ fn cpu_compute_contact_force(
 /// 同じ条件での力の一致を検証
 #[test]
 fn test_cpu_gpu_contact_force_consistency() {
-    let material = crate::physics::MaterialProperties {
+    let material = crate::simulation::constants::MaterialProperties {
         youngs_modulus: 1e6,
         poisson_ratio: 0.25,
         restitution: 0.5,
@@ -1008,7 +1008,7 @@ fn test_cpu_gpu_trajectory_consistency() {
     let mass = 1.0 / 95.493_f32;
     let mass_inv = 95.493_f32;
 
-    let material = crate::physics::MaterialProperties {
+    let material = crate::simulation::constants::MaterialProperties {
         youngs_modulus: 1e6,
         poisson_ratio: 0.25,
         restitution: 0.5,
@@ -2104,7 +2104,7 @@ fn test_gpu_e2e_matches_cpu_single_particle() {
                 radius,
                 mass,
                 &container,
-                &crate::physics::WallProperties::default(),
+                &crate::simulation::constants::WallProperties::default(),
             );
             integrate_first_half(
                 &mut cpu_pos,
@@ -2127,7 +2127,7 @@ fn test_gpu_e2e_matches_cpu_single_particle() {
                 radius,
                 mass,
                 &container,
-                &crate::physics::WallProperties::default(),
+                &crate::simulation::constants::WallProperties::default(),
             );
             integrate_second_half(
                 &mut cpu_vel,

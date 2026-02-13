@@ -12,16 +12,15 @@ use analysis::{update_distribution, CurrentDistribution, DistributionHistory};
 use physics::{
     cpu::{run_physics_substeps, InstanceCpuWriterPlugin},
     gpu::{apply_gpu_results, GpuInstanceWriterPlugin, GpuPhysicsPlugin},
-    init_spatial_hash_grid, ContactHistory, MaterialProperties, ParticleStore, PhysicsConstants,
-    WallProperties,
+    init_spatial_hash_grid, ContactHistory, ParticleStore,
 };
 use rendering::{
     camera_plugin, is_cpu_backend, is_gpu_backend, setup_camera, setup_rendering, spawn_particles,
     update_container_transforms, GpuInstancingPlugin, RenderExtractResourcesPlugin,
 };
-use simulation::common::{
-    ContainerParams, OscillationParams, PhysicsBackend, SimulationConfig, SimulationSettings,
-    SimulationState, SimulationTimeParams,
+use simulation::{
+    constants::{PhysicsBackend, SimulationConstants},
+    state::SimulationState,
 };
 use ui::{
     handle_amplitude_buttons, handle_control_buttons, handle_frequency_buttons,
@@ -51,19 +50,12 @@ fn main() {
         // Shared particle draw path
         .add_plugins(GpuInstancingPlugin)
         // リソース
-        .insert_resource(SimulationConfig::default())
-        .insert_resource(ContainerParams::default())
-        .insert_resource(OscillationParams::default())
-        .insert_resource(PhysicsConstants::default())
-        .insert_resource(MaterialProperties::default())
-        .insert_resource(WallProperties::default())
+        .insert_resource(SimulationConstants::default())
         .insert_resource(PhysicsBackend::default())
         .insert_resource(ContactHistory::default())
         .insert_resource(DistributionHistory::default())
         .insert_resource(CurrentDistribution::default())
         .insert_resource(SimulationState::default())
-        .insert_resource(SimulationTimeParams::default())
-        .insert_resource(SimulationSettings::default())
         .insert_resource(ParticleStore::default())
         // スタートアップシステム（カメラはPreStartupで先に生成）
         .add_systems(PreStartup, setup_camera)

@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use parking_lot::Mutex;
 use rayon::prelude::*;
 
-use crate::physics::shared::GridSettings;
+use crate::simulation::constants::{GridSettings, SimulationConstants};
 
 /// 空間ハッシュグリッドによる高速な近傍検索（CPU用）
 #[derive(Resource)]
@@ -102,7 +102,8 @@ impl SpatialHashGrid {
 }
 
 /// GridSettings から SpatialHashGrid を初期化するシステム
-pub fn init_spatial_hash_grid(mut commands: Commands, grid_settings: Res<GridSettings>) {
+pub fn init_spatial_hash_grid(mut commands: Commands, constants: Res<SimulationConstants>) {
+    let grid_settings: GridSettings = constants.grid;
     commands.insert_resource(SpatialHashGrid::new(
         grid_settings.cell_size,
         grid_settings.table_size,
