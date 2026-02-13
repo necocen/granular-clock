@@ -304,6 +304,9 @@ impl Node for GpuPhysicsNode {
             // ここではサブステップ単位の container_offset のみ上書きする。
             if let (Some(gpu_data), Some(container_params)) = (gpu_data, container_params) {
                 let mut runtime_params = gpu_data.params;
+                // 振動無効時でも現在の当たり判定位置を維持するため、
+                // まずフレーム基準オフセットを反映する。
+                runtime_params.container_offset = container_params.container_offset;
                 let mut phase = substep_phase.unwrap_or(container_params.oscillation_phase_start);
                 if container_params.oscillation_enabled {
                     advance_oscillation_phase(
@@ -311,13 +314,9 @@ impl Node for GpuPhysicsNode {
                         container_params.oscillation_frequency,
                         runtime_params.dt,
                     );
+                    runtime_params.container_offset = container_params.base_position_y
+                        + oscillation_displacement(container_params.oscillation_amplitude, phase);
                 }
-                runtime_params.container_offset = container_params.base_position_y
-                    + oscillation_displacement(
-                        container_params.oscillation_enabled,
-                        container_params.oscillation_amplitude,
-                        phase,
-                    );
                 substep_phase = Some(phase);
                 render_queue.write_buffer(&buffers.params, 0, bytemuck::bytes_of(&runtime_params));
             }

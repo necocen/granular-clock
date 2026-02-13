@@ -49,10 +49,7 @@ pub fn advance_oscillation_phase(phase: &mut f32, frequency: f32, dt: f32) {
 }
 
 /// 位相から振動変位（base からの相対オフセット）を返す。
-pub fn oscillation_displacement(enabled: bool, amplitude: f32, phase: f32) -> f32 {
-    if !enabled {
-        return 0.0;
-    }
+pub fn oscillation_displacement(amplitude: f32, phase: f32) -> f32 {
     amplitude * phase.sin()
 }
 
@@ -62,9 +59,11 @@ pub fn advance_oscillation(
     params: &OscillationParams,
     dt: f32,
 ) {
-    if params.enabled {
-        advance_oscillation_phase(&mut sim_state.oscillation_phase, params.frequency, dt);
+    // 振動無効時は「現在位置で停止」させる（オフセットを維持する）。
+    if !params.enabled {
+        return;
     }
-    sim_state.container_offset =
-        oscillation_displacement(params.enabled, params.amplitude, sim_state.oscillation_phase);
+
+    advance_oscillation_phase(&mut sim_state.oscillation_phase, params.frequency, dt);
+    sim_state.container_offset = oscillation_displacement(params.amplitude, sim_state.oscillation_phase);
 }
