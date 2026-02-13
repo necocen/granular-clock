@@ -9,19 +9,20 @@ mod ui;
 use bevy::prelude::*;
 
 use analysis::{update_distribution, CurrentDistribution, DistributionHistory};
-use gpu::{apply_gpu_results, GpuPhysicsPlugin};
+use gpu::{apply_gpu_results, GpuInstanceWriterPlugin, GpuPhysicsPlugin};
 // use debug::debug_particles; // 必要時のみ有効化
 use physics::{
     init_spatial_hash_grid, ContactHistory, MaterialProperties, ParticleStore, PhysicsConstants,
     WallProperties,
 };
 use rendering::{
-    camera_plugin, setup_camera, setup_rendering, spawn_particles, update_container_transforms,
-    GpuInstancingPlugin,
+    camera_plugin, is_cpu_backend, is_gpu_backend, setup_camera, setup_rendering, spawn_particles,
+    update_container_transforms, GpuInstancingPlugin, InstanceCpuWriterPlugin,
+    RenderExtractResourcesPlugin,
 };
 use simulation::{
-    run_physics_substeps, update_oscillation_for_gpu, Container, OscillationParams, PhysicsBackend,
-    SimulationConfig, SimulationSettings, SimulationState, SimulationTime,
+    run_physics_substeps, Container, OscillationParams, PhysicsBackend, SimulationConfig,
+    SimulationSettings, SimulationState, SimulationTime,
 };
 use ui::{
     handle_amplitude_buttons, handle_control_buttons, handle_frequency_buttons,
@@ -41,7 +42,14 @@ fn main() {
             ..default()
         }))
         .add_plugins(camera_plugin())
+        // Shared (CPU/GPU 共通): Main→Render 抽出
+        .add_plugins(RenderExtractResourcesPlugin)
+        // GPU physics / GPU instance write
         .add_plugins(GpuPhysicsPlugin)
+        .add_plugins(GpuInstanceWriterPlugin)
+        // CPU instance write
+        .add_plugins(InstanceCpuWriterPlugin)
+        // Shared particle draw path
         .add_plugins(GpuInstancingPlugin)
         // リソース
         .insert_resource(SimulationConfig::default())
@@ -64,19 +72,9 @@ fn main() {
         .add_systems(Startup, setup_rendering)
         .add_systems(Startup, spawn_particles.after(setup_rendering))
         // 物理サブステップ（CPU物理）
-        .add_systems(
-            Update,
-            run_physics_substeps
-                .run_if(|backend: Res<PhysicsBackend>| *backend == PhysicsBackend::Cpu),
-        )
+        .add_systems(Update, run_physics_substeps.run_if(is_cpu_backend))
         // GPU 物理結果の適用
-        .add_systems(
-            Update,
-            apply_gpu_results
-                .run_if(|backend: Res<PhysicsBackend>| *backend == PhysicsBackend::Gpu),
-        )
-        // 振動（GPU モード用。CPU モードはサブステップ内で更新）
-        .add_systems(Update, update_oscillation_for_gpu)
+        .add_systems(Update, apply_gpu_results.run_if(is_gpu_backend))
         .add_systems(Update, update_container_transforms)
         .add_systems(Update, update_distribution)
         .add_systems(Update, handle_reset)

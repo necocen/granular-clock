@@ -3,6 +3,8 @@ use std::f32::consts::PI;
 
 use super::Container;
 
+const TWO_PI: f32 = 2.0 * PI;
+
 /// 振動パラメータ
 #[derive(Resource, Clone, Copy)]
 pub struct OscillationParams {
@@ -12,6 +14,8 @@ pub struct OscillationParams {
     pub frequency: f32,
     /// 現在の位相 (rad)
     pub phase: f32,
+    /// 現在フレームのサブステップ開始時位相 (rad)
+    pub frame_start_phase: f32,
     /// 振動が有効かどうか
     pub enabled: bool,
 }
@@ -22,6 +26,7 @@ impl Default for OscillationParams {
             amplitude: 0.03, // 30 mm（非常に穏やかな振動）
             frequency: 5.0,  // 5 Hz（低周波）
             phase: 0.0,
+            frame_start_phase: 0.0,
             enabled: true,
         }
     }
@@ -36,22 +41,32 @@ impl OscillationParams {
     }
 }
 
-/// GPU モード用: 振動を更新するシステム
-/// CPU モードでは `systems::update_oscillation` がサブステップ内で呼ばれるため不要
-pub fn update_oscillation_for_gpu(
-    mut container: ResMut<Container>,
-    params: Res<OscillationParams>,
-    sim_time: Res<super::SimulationTime>,
-    backend: Res<super::PhysicsBackend>,
-) {
-    if *backend != super::PhysicsBackend::Gpu {
-        return;
-    }
-    if !params.enabled {
-        container.current_offset = 0.0;
-        return;
-    }
+/// 1 サブステップあたりの位相増分を返す。
+pub fn oscillation_phase_step(frequency: f32, dt: f32) -> f32 {
+    frequency * TWO_PI * dt
+}
 
-    let t = sim_time.elapsed as f32;
-    container.current_offset = params.amplitude * (2.0 * PI * params.frequency * t).sin();
+/// 位相を 1 サブステップ進める（CPU/GPU 共通）。
+pub fn advance_oscillation_phase(phase: &mut f32, frequency: f32, dt: f32) {
+    *phase += oscillation_phase_step(frequency, dt);
+    if *phase > TWO_PI {
+        *phase -= TWO_PI;
+    }
+}
+
+/// 位相から振動変位（base からの相対オフセット）を返す。
+pub fn oscillation_displacement(enabled: bool, amplitude: f32, phase: f32) -> f32 {
+    if !enabled {
+        return 0.0;
+    }
+    amplitude * phase.sin()
+}
+
+/// 振動位相を 1 ステップ進め、コンテナオフセットを更新する（CPU/GPU 共通）。
+pub fn advance_oscillation(container: &mut Container, params: &mut OscillationParams, dt: f32) {
+    if params.enabled {
+        advance_oscillation_phase(&mut params.phase, params.frequency, dt);
+    }
+    container.current_offset =
+        oscillation_displacement(params.enabled, params.amplitude, params.phase);
 }

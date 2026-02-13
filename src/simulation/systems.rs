@@ -7,25 +7,10 @@ use crate::physics::{
     PhysicsConstants, SpatialHashGrid, WallProperties,
 };
 
-use super::{Container, OscillationParams, SimulationSettings, SimulationState, SimulationTime};
-
-/// 振動を更新
-fn update_oscillation(
-    container: &mut Container,
-    params: &mut OscillationParams,
-    sim_time: &SimulationTime,
-) {
-    use std::f32::consts::PI;
-    if !params.enabled {
-        container.current_offset = 0.0;
-        return;
-    }
-    params.phase += params.frequency * 2.0 * PI * sim_time.dt;
-    if params.phase > 2.0 * PI {
-        params.phase -= 2.0 * PI;
-    }
-    container.current_offset = params.amplitude * params.phase.sin();
-}
+use super::{
+    advance_oscillation, Container, OscillationParams, SimulationSettings, SimulationState,
+    SimulationTime,
+};
 
 /// 空間ハッシュグリッドを構築
 fn build_spatial_grid(grid: &SpatialHashGrid, particles: &ParticleStore) {
@@ -234,7 +219,7 @@ pub fn run_physics_substeps(world: &mut World) {
     let wall_props = *world.resource::<WallProperties>();
 
     for _ in 0..substeps {
-        update_oscillation(&mut container, &mut osc_params, &sim_time);
+        advance_oscillation(&mut container, &mut osc_params, sim_time.dt);
         build_spatial_grid(grid, &particles);
         clear_forces(&mut particles);
         compute_particle_collisions(

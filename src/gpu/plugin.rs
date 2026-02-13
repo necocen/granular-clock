@@ -2,7 +2,6 @@ use bevy::{
     prelude::*,
     render::{
         extract_resource::{ExtractResource, ExtractResourcePlugin},
-        graph::CameraDriverLabel,
         render_graph::RenderGraph,
         render_resource::{CommandEncoderDescriptor, MapMode},
         renderer::{RenderDevice, RenderQueue},
@@ -15,8 +14,8 @@ use crate::physics::{
     MaterialProperties, ParticleSize, ParticleStore, PhysicsConstants, WallProperties,
 };
 use crate::simulation::{
-    Container, OscillationParams, PhysicsBackend, SimulationSettings, SimulationState,
-    SimulationTime,
+    advance_oscillation, Container, OscillationParams, PhysicsBackend, SimulationSettings,
+    SimulationState, SimulationTime,
 };
 
 use super::{
@@ -67,9 +66,7 @@ pub struct ExtractedContainerParams {
     pub oscillation_enabled: bool,
     pub oscillation_amplitude: f32,
     pub oscillation_frequency: f32,
-    pub sim_elapsed: f64,
-    pub sim_dt: f32,
-    pub substeps_per_frame: u32,
+    pub oscillation_phase_start: f32,
 }
 
 impl ExtractResource for ExtractedContainerParams {
@@ -106,6 +103,11 @@ impl Plugin for GpuPhysicsPlugin {
             .add_plugins(ExtractResourcePlugin::<GpuParticleData>::default())
             .add_plugins(ExtractResourcePlugin::<ExtractedContainerParams>::default())
             .add_plugins(ExtractResourcePlugin::<GpuReadbackBuffer>::default())
+            .add_systems(
+                Update,
+                update_oscillation_for_gpu
+                    .run_if(|backend: Res<PhysicsBackend>| *backend == PhysicsBackend::Gpu),
+            )
             .add_systems(PostUpdate, extract_particle_data)
             .add_systems(PostUpdate, update_container_params)
             .add_systems(Update, update_simulation_time);
@@ -129,8 +131,6 @@ impl Plugin for GpuPhysicsPlugin {
         // レンダーグラフにノードを追加
         let mut render_graph = render_app.world_mut().resource_mut::<RenderGraph>();
         render_graph.add_node(GpuPhysicsLabel, GpuPhysicsNode::new());
-        // カメラドライバーの前に実行
-        render_graph.add_node_edge(GpuPhysicsLabel, CameraDriverLabel);
     }
 }
 
@@ -154,8 +154,6 @@ fn init_pipelines(
 fn update_container_params(
     container: Res<Container>,
     osc_params: Res<OscillationParams>,
-    sim_time: Res<SimulationTime>,
-    settings: Res<SimulationSettings>,
     mut params: ResMut<ExtractedContainerParams>,
 ) {
     // デフォルト（フレーム基準）オフセット。GPUノード側でサブステップごとに上書きする。
@@ -164,9 +162,25 @@ fn update_container_params(
     params.oscillation_enabled = osc_params.enabled;
     params.oscillation_amplitude = osc_params.amplitude;
     params.oscillation_frequency = osc_params.frequency;
-    params.sim_elapsed = sim_time.elapsed;
-    params.sim_dt = sim_time.dt;
-    params.substeps_per_frame = settings.substeps_per_frame;
+    params.oscillation_phase_start = osc_params.frame_start_phase;
+}
+
+/// GPU モード用: CPU と同じ位相更新ロジックで振動を進める。
+fn update_oscillation_for_gpu(
+    mut container: ResMut<Container>,
+    mut params: ResMut<OscillationParams>,
+    sim_time: Res<SimulationTime>,
+    settings: Res<SimulationSettings>,
+    sim_state: Res<SimulationState>,
+) {
+    if sim_state.paused {
+        return;
+    }
+
+    params.frame_start_phase = params.phase;
+    for _ in 0..settings.substeps_per_frame {
+        advance_oscillation(&mut container, &mut params, sim_time.dt);
+    }
 }
 
 /// Main World の粒子データを GpuParticleData に抽出（初回または粒子数変更時）

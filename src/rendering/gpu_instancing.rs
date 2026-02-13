@@ -1,9 +1,5 @@
-//! Instanced Rendering for particles (both CPU and GPU physics modes)
-//!
-//! Bevy の SpecializedMeshPipeline パターンを使って、
-//! パーティクルをインスタンス描画する。
-//! - GPU モード: compute shader で物理バッファ → インスタンスバッファ変換
-//! - CPU モード: ECS の Position から CPU でインスタンスデータを構築してアップロード
+//! Instanced Rendering for particles.
+//! This plugin is rendering-only: it queues and draws from an already prepared instance buffer.
 
 use bevy::{
     camera::visibility::NoFrustumCulling,
@@ -17,7 +13,6 @@ use bevy::{
     prelude::*,
     render::{
         extract_component::{ExtractComponent, ExtractComponentPlugin},
-        extract_resource::{ExtractResource, ExtractResourcePlugin},
         mesh::{allocator::MeshAllocator, RenderMesh, RenderMeshBufferInfo},
         render_asset::RenderAssets,
         render_phase::{
@@ -25,43 +20,12 @@ use bevy::{
             RenderCommandResult, SetItemPipeline, TrackedRenderPass, ViewSortedRenderPhases,
         },
         render_resource::*,
-        renderer::{RenderDevice, RenderQueue},
         view::ExtractedView,
         Render, RenderApp, RenderStartup, RenderSystems,
     },
 };
-use bytemuck::{Pod, Zeroable};
 
-use crate::gpu::GpuPhysicsBuffers;
-use crate::physics::{ParticleSize, ParticleStore};
-use crate::rendering::ParticleMeshes;
-use crate::simulation::PhysicsBackend;
-use crate::simulation::SimulationConfig;
-
-// ──────────────────── Data types ────────────────────
-
-/// Instance data layout: position + scale + color (32 bytes)
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable, Default)]
-pub struct InstanceData {
-    /// xyz = world position, w = radius (uniform scale)
-    pub pos_scale: [f32; 4],
-    /// RGBA color
-    pub color: [f32; 4],
-}
-
-/// Params for the particle-to-instance compute shader (GPU mode only)
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-pub struct InstanceParams {
-    pub num_particles: u32,
-    pub num_large: u32,
-    pub _pad: [u32; 2],
-    pub large_color: [f32; 4],
-    pub small_color: [f32; 4],
-}
-
-// ──────────────────── Main World components/resources ────────────────────
+use crate::rendering::{InstanceBuffer, InstanceData, ParticleMeshes};
 
 /// Marker component for the particle batch proxy entity
 #[derive(Component, Clone)]
@@ -77,66 +41,6 @@ impl ExtractComponent for ParticleBatchMarker {
     ) -> Option<Self> {
         Some(ParticleBatchMarker)
     }
-}
-
-/// Extracted particle counts (Main World → Render World)
-#[derive(Resource, Clone, Default)]
-pub struct ExtractedParticleCounts {
-    pub num_large: u32,
-    pub num_small: u32,
-    pub large_color: [f32; 4],
-    pub small_color: [f32; 4],
-}
-
-impl ExtractResource for ExtractedParticleCounts {
-    type Source = ExtractedParticleCounts;
-    fn extract_resource(source: &Self::Source) -> Self {
-        source.clone()
-    }
-}
-
-/// CPU mode instance data (Main World → Render World)
-#[derive(Resource, Clone, Default)]
-pub struct CpuInstanceData(pub Vec<InstanceData>);
-
-impl ExtractResource for CpuInstanceData {
-    type Source = CpuInstanceData;
-    fn extract_resource(source: &Self::Source) -> Self {
-        source.clone()
-    }
-}
-
-/// Physics backend extracted to Render World
-impl ExtractResource for PhysicsBackend {
-    type Source = PhysicsBackend;
-    fn extract_resource(source: &Self::Source) -> Self {
-        *source
-    }
-}
-
-// ──────────────────── Render World components/resources ────────────────────
-
-/// Instance buffer component attached to batch proxy entity in Render World
-#[derive(Component)]
-pub struct InstanceBuffer {
-    pub buffer: Buffer,
-    pub len: u32,
-}
-
-/// Persistent resources for particle instancing (Render World)
-#[derive(Resource)]
-#[allow(dead_code)]
-pub struct ParticleInstanceResources {
-    /// Combined instance buffer (all particles)
-    pub instance_buffer: Buffer,
-    /// Params uniform buffer (GPU mode compute shader)
-    pub params_buffer: Buffer,
-    /// Compute pipeline for particle-to-instance conversion (GPU mode)
-    pub compute_pipeline: CachedComputePipelineId,
-    /// Current capacity
-    pub capacity: u32,
-    /// 共有型定義シェーダー（#import 解決用にハンドルを保持）
-    pub _physics_types_shader: Handle<Shader>,
 }
 
 /// Custom pipeline extending MeshPipeline for instanced particle rendering
@@ -159,8 +63,6 @@ impl SpecializedMeshPipeline for ParticleInstancePipeline {
         desc.fragment.as_mut().unwrap().shader = self.shader.clone();
 
         // パーティクルは不透明: デプス書き込み有効、ブレンド無し
-        // Transparent3d フェーズで描画されるが、デプスバッファに書き込むことで
-        // 後から描画される仕切り等の透明オブジェクトとの前後関係を正しく処理する
         if let Some(ref mut depth_stencil) = desc.depth_stencil {
             depth_stencil.depth_write_enabled = true;
         }
@@ -175,13 +77,11 @@ impl SpecializedMeshPipeline for ParticleInstancePipeline {
             array_stride: std::mem::size_of::<InstanceData>() as u64,
             step_mode: VertexStepMode::Instance,
             attributes: vec![
-                // @location(3): pos_scale (vec4<f32>)
                 VertexAttribute {
                     format: VertexFormat::Float32x4,
                     offset: 0,
                     shader_location: 3,
                 },
-                // @location(4): color (vec4<f32>)
                 VertexAttribute {
                     format: VertexFormat::Float32x4,
                     offset: VertexFormat::Float32x4.size(),
@@ -193,8 +93,6 @@ impl SpecializedMeshPipeline for ParticleInstancePipeline {
         Ok(desc)
     }
 }
-
-// ──────────────────── Draw commands ────────────────────
 
 type DrawParticleInstanced = (
     SetItemPipeline,
@@ -272,20 +170,11 @@ impl<P: PhaseItem> RenderCommand<P> for DrawMeshInstanced {
     }
 }
 
-// ──────────────────── Plugin ────────────────────
-
 pub struct GpuInstancingPlugin;
 
 impl Plugin for GpuInstancingPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(ExtractedParticleCounts::default())
-            .insert_resource(CpuInstanceData::default())
-            .add_plugins(ExtractResourcePlugin::<ExtractedParticleCounts>::default())
-            .add_plugins(ExtractResourcePlugin::<CpuInstanceData>::default())
-            .add_plugins(ExtractResourcePlugin::<PhysicsBackend>::default())
-            .add_plugins(ExtractComponentPlugin::<ParticleBatchMarker>::default())
-            .add_systems(PostUpdate, sync_particle_counts)
-            .add_systems(PostUpdate, build_cpu_instance_data)
+        app.add_plugins(ExtractComponentPlugin::<ParticleBatchMarker>::default())
             .add_systems(
                 Startup,
                 spawn_particle_batch.after(crate::rendering::setup_rendering),
@@ -301,48 +190,8 @@ impl Plugin for GpuInstancingPlugin {
             .add_systems(RenderStartup, init_particle_render_pipeline)
             .add_systems(
                 Render,
-                (
-                    prepare_particle_instances.in_set(RenderSystems::PrepareResources),
-                    queue_particle_instances.in_set(RenderSystems::QueueMeshes),
-                ),
+                queue_particle_instances.in_set(RenderSystems::QueueMeshes),
             );
-    }
-}
-
-// ──────────────────── Main World systems ────────────────────
-
-/// Sync particle counts from SimulationConfig to extracted resource
-fn sync_particle_counts(
-    config: Res<SimulationConfig>,
-    mut counts: ResMut<ExtractedParticleCounts>,
-) {
-    counts.num_large = config.num_large;
-    counts.num_small = config.num_small;
-    counts.large_color = [0.8, 0.2, 0.2, 1.0]; // 赤
-    counts.small_color = [0.2, 0.2, 0.8, 1.0]; // 青
-}
-
-/// Build instance data from ParticleStore (CPU mode)
-fn build_cpu_instance_data(
-    backend: Res<PhysicsBackend>,
-    store: Res<ParticleStore>,
-    mut cpu_data: ResMut<CpuInstanceData>,
-) {
-    if *backend != PhysicsBackend::Cpu {
-        cpu_data.0.clear();
-        return;
-    }
-
-    cpu_data.0.clear();
-    for p in &store.particles {
-        let color = match p.size {
-            ParticleSize::Large => [0.8, 0.2, 0.2, 1.0],
-            ParticleSize::Small => [0.2, 0.2, 0.8, 1.0],
-        };
-        cpu_data.0.push(InstanceData {
-            pos_scale: [p.position.x, p.position.y, p.position.z, p.radius],
-            color,
-        });
     }
 }
 
@@ -358,8 +207,6 @@ fn spawn_particle_batch(mut commands: Commands, meshes: Res<ParticleMeshes>) {
     ));
 }
 
-// ──────────────────── Render World systems ────────────────────
-
 /// Initialize the instanced particle render pipeline (one-time)
 fn init_particle_render_pipeline(
     mut commands: Commands,
@@ -370,207 +217,6 @@ fn init_particle_render_pipeline(
         shader: asset_server.load("shaders/particle_instancing.wgsl"),
         mesh_pipeline: mesh_pipeline.clone(),
     });
-}
-
-/// Compute bind group layout for particle-to-instance shader
-fn instance_compute_bind_group_layout_desc() -> BindGroupLayoutDescriptor {
-    BindGroupLayoutDescriptor::new(
-        "particle_to_instance_layout",
-        &[
-            // binding 0: particles (storage, read)
-            BindGroupLayoutEntry {
-                binding: 0,
-                visibility: ShaderStages::COMPUTE,
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            // binding 1: instances (storage, read_write)
-            BindGroupLayoutEntry {
-                binding: 1,
-                visibility: ShaderStages::COMPUTE,
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            // binding 2: params (uniform)
-            BindGroupLayoutEntry {
-                binding: 2,
-                visibility: ShaderStages::COMPUTE,
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-        ],
-    )
-}
-
-/// Prepare instance buffer: GPU mode uses compute shader, CPU mode uploads from ECS
-#[allow(clippy::too_many_arguments)]
-fn prepare_particle_instances(
-    mut commands: Commands,
-    render_device: Res<RenderDevice>,
-    render_queue: Res<RenderQueue>,
-    pipeline_cache: Res<PipelineCache>,
-    asset_server: Res<AssetServer>,
-    counts: Res<ExtractedParticleCounts>,
-    backend: Option<Res<PhysicsBackend>>,
-    physics_buffers: Option<Res<GpuPhysicsBuffers>>,
-    cpu_data: Option<Res<CpuInstanceData>>,
-    mut resources: Option<ResMut<ParticleInstanceResources>>,
-    batch_query: Query<Entity, With<ParticleBatchMarker>>,
-) {
-    let total = counts.num_large + counts.num_small;
-    if total == 0 {
-        return;
-    }
-
-    let is_gpu = backend
-        .as_ref()
-        .map(|b| **b == PhysicsBackend::Gpu)
-        .unwrap_or(true);
-
-    // Create resources if they don't exist
-    if resources.is_none() {
-        let capacity = total.max(2048);
-        let instance_size = std::mem::size_of::<InstanceData>() as u64;
-
-        let instance_buffer = render_device.create_buffer(&BufferDescriptor {
-            label: Some("particle_instance_buffer"),
-            size: instance_size * capacity as u64,
-            usage: BufferUsages::VERTEX | BufferUsages::STORAGE | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let params_buffer = render_device.create_buffer(&BufferDescriptor {
-            label: Some("instance_compute_params"),
-            size: std::mem::size_of::<InstanceParams>() as u64,
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let physics_types_shader: Handle<Shader> = asset_server.load("shaders/physics_types.wgsl");
-        let shader = asset_server.load("shaders/particle_to_instance.wgsl");
-        let compute_pipeline = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
-            label: Some("particle_to_instance_pipeline".into()),
-            layout: vec![instance_compute_bind_group_layout_desc()],
-            shader,
-            shader_defs: vec![],
-            entry_point: Some("main".into()),
-            push_constant_ranges: vec![],
-            zero_initialize_workgroup_memory: true,
-        });
-
-        commands.insert_resource(ParticleInstanceResources {
-            instance_buffer,
-            params_buffer,
-            compute_pipeline,
-            capacity,
-            _physics_types_shader: physics_types_shader,
-        });
-        return; // Resources will be available next frame
-    }
-
-    let res = resources.as_mut().unwrap();
-
-    let instance_len;
-
-    if is_gpu {
-        // ── GPU mode: compute shader converts physics buffer → instance buffer ──
-        let Some(physics_buffers) = physics_buffers else {
-            return;
-        };
-        if physics_buffers.num_particles == 0 {
-            return;
-        }
-
-        // Update params uniform
-        let params = InstanceParams {
-            num_particles: total,
-            num_large: counts.num_large,
-            _pad: [0; 2],
-            large_color: counts.large_color,
-            small_color: counts.small_color,
-        };
-        render_queue.write_buffer(&res.params_buffer, 0, bytemuck::bytes_of(&params));
-
-        // Get compute pipeline (might not be compiled yet)
-        let Some(pipeline) = pipeline_cache.get_compute_pipeline(res.compute_pipeline) else {
-            return;
-        };
-
-        // 物理計算結果（最新状態は固定で A スロット）を毎フレーム参照する。
-        let bind_group_layout = pipeline.get_bind_group_layout(0);
-        let bind_group_layout: BindGroupLayout = bind_group_layout.clone().into();
-
-        let bind_group = render_device.create_bind_group(
-            Some("particle_to_instance_bind_group"),
-            &bind_group_layout,
-            &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: physics_buffers.latest_particles().as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: res.instance_buffer.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: res.params_buffer.as_entire_binding(),
-                },
-            ],
-        );
-
-        // Run compute shader
-        let mut encoder = render_device.create_command_encoder(&CommandEncoderDescriptor {
-            label: Some("particle_to_instance_encoder"),
-        });
-
-        {
-            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
-                label: Some("particle_to_instance_pass"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, &bind_group, &[]);
-            let workgroups = total.div_ceil(64);
-            pass.dispatch_workgroups(workgroups, 1, 1);
-        }
-
-        render_queue.submit([encoder.finish()]);
-        instance_len = total;
-    } else {
-        // ── CPU mode: upload instance data directly ──
-        let Some(ref cpu_data) = cpu_data else {
-            return;
-        };
-        if cpu_data.0.is_empty() {
-            return;
-        }
-
-        instance_len = cpu_data.0.len() as u32;
-        let bytes = bytemuck::cast_slice(&cpu_data.0);
-        render_queue.write_buffer(&res.instance_buffer, 0, bytes);
-    }
-
-    // Attach InstanceBuffer component to batch proxy entity in render world
-
-    for entity in &batch_query {
-        commands.entity(entity).insert(InstanceBuffer {
-            buffer: res.instance_buffer.clone(),
-            len: instance_len,
-        });
-    }
 }
 
 /// Queue particle batch entities into Transparent3d render phase
@@ -618,9 +264,6 @@ fn queue_particle_instances(
             };
 
             // Sort distance を最小にして、他の透明オブジェクト（仕切り等）より先に描画。
-            // Bevy の Transparent3d は距離の昇順でソートする（小さい値が先に描画）。
-            // パーティクルはデプスバッファに書き込むので、後から描画される
-            // 仕切りが正しくデプステストされ、粒子を適切に遮蔽できる。
             phase.add(Transparent3d {
                 entity: (render_entity, *main_entity),
                 pipeline: pipeline_id,

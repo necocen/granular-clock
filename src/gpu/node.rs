@@ -1,3 +1,4 @@
+use crate::simulation::{advance_oscillation_phase, oscillation_displacement};
 use bevy::{
     prelude::*,
     render::{
@@ -40,26 +41,6 @@ pub struct GpuPhysicsNode {
 impl GpuPhysicsNode {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    fn container_offset_for_substep(
-        container_params: &ExtractedContainerParams,
-        substeps: u32,
-        substep_index: u32,
-        dt: f32,
-    ) -> f32 {
-        if !container_params.oscillation_enabled {
-            return container_params.base_position_y;
-        }
-
-        let steps = substeps.max(1) as f64;
-        let dt64 = dt as f64;
-        let start_time = container_params.sim_elapsed - steps * dt64;
-        let t = start_time + (substep_index as f64 + 1.0) * dt64;
-        let phase = 2.0 * std::f64::consts::PI * container_params.oscillation_frequency as f64 * t;
-
-        container_params.base_position_y
-            + container_params.oscillation_amplitude * phase.sin() as f32
     }
 }
 
@@ -313,20 +294,31 @@ impl Node for GpuPhysicsNode {
                 run_integrate(encoder, particles_bind_group, integrate_pipeline);
             };
 
+        let mut substep_phase = container_params.map(|params| params.oscillation_phase_start);
+
         // 1サブステップ:
         // - 前半: hash/sort/cell + collision + integrate_first_half
         // - 後半: hash/sort/cell + collision + integrate_second_half
-        for substep_index in 0..self.substeps {
+        for _ in 0..self.substeps {
             // plugin::update_params_only がフレーム基準の共通 params を更新し、
             // ここではサブステップ単位の container_offset のみ上書きする。
             if let (Some(gpu_data), Some(container_params)) = (gpu_data, container_params) {
                 let mut runtime_params = gpu_data.params;
-                runtime_params.container_offset = Self::container_offset_for_substep(
-                    container_params,
-                    self.substeps,
-                    substep_index,
-                    runtime_params.dt,
-                );
+                let mut phase = substep_phase.unwrap_or(container_params.oscillation_phase_start);
+                if container_params.oscillation_enabled {
+                    advance_oscillation_phase(
+                        &mut phase,
+                        container_params.oscillation_frequency,
+                        runtime_params.dt,
+                    );
+                }
+                runtime_params.container_offset = container_params.base_position_y
+                    + oscillation_displacement(
+                        container_params.oscillation_enabled,
+                        container_params.oscillation_amplitude,
+                        phase,
+                    );
+                substep_phase = Some(phase);
                 render_queue.write_buffer(&buffers.params, 0, bytemuck::bytes_of(&runtime_params));
             }
 
