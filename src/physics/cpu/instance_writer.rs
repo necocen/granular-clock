@@ -11,8 +11,7 @@ use bevy::{
 };
 
 use crate::physics::{ParticleSize, ParticleStore};
-
-use super::{
+use crate::rendering::{
     is_cpu_backend, normalized_instance_capacity, CpuInstanceData, InstanceBuffer, InstanceData,
     ParticleBatchMarker, RenderInstanceBufferResource, LARGE_PARTICLE_COLOR, SMALL_PARTICLE_COLOR,
 };

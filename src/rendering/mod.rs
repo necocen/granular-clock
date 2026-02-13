@@ -1,13 +1,11 @@
 pub mod camera;
 pub mod extract_resources;
 pub mod gpu_instancing;
-pub mod instance_cpu_writer;
 pub mod instance_data;
 pub mod materials;
 
 pub use camera::*;
 pub use extract_resources::*;
 pub use gpu_instancing::*;
-pub use instance_cpu_writer::*;
 pub use instance_data::*;
 pub use materials::*;

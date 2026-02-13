@@ -2,6 +2,8 @@ use bevy::prelude::*;
 use std::collections::HashMap;
 use std::f32::consts::PI;
 
+use crate::physics::shared::MaterialProperties;
+
 /// 接触履歴
 #[derive(Default, Clone)]
 pub struct ContactState {
@@ -40,33 +42,6 @@ impl ContactHistory {
         // 全ての接触をリセット
         for state in self.contacts.values_mut() {
             state.active = false;
-        }
-    }
-}
-
-/// 材料パラメータ
-#[derive(Resource, Clone, Copy)]
-pub struct MaterialProperties {
-    /// ヤング率 (Pa)
-    pub youngs_modulus: f32,
-    /// ポアソン比
-    pub poisson_ratio: f32,
-    /// 反発係数
-    pub restitution: f32,
-    /// 摩擦係数
-    pub friction: f32,
-    /// 転がり摩擦係数
-    pub rolling_friction: f32,
-}
-
-impl Default for MaterialProperties {
-    fn default() -> Self {
-        Self {
-            youngs_modulus: 1e7, // 10MPa　かため
-            poisson_ratio: 0.25,
-            restitution: 0.6, // 反発係数（中程度）
-            friction: 0.3,
-            rolling_friction: 0.1,
         }
     }
 }

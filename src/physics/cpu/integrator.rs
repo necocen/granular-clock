@@ -1,20 +1,5 @@
 use bevy::prelude::*;
 
-/// シミュレーションの物理定数
-#[derive(Resource, Clone, Copy)]
-pub struct PhysicsConstants {
-    /// 重力加速度
-    pub gravity: Vec3,
-}
-
-impl Default for PhysicsConstants {
-    fn default() -> Self {
-        Self {
-            gravity: Vec3::new(0.0, -9.81, 0.0),
-        }
-    }
-}
-
 /// Velocity Verlet積分の前半ステップ
 /// 速度を半分更新し、位置を全更新
 #[allow(clippy::too_many_arguments)]

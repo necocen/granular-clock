@@ -1,14 +1,11 @@
-pub mod collision;
-pub mod contact;
-pub mod integrator;
+pub mod cpu;
+pub mod gpu;
 pub mod particle;
-pub mod spatial_hash;
+pub mod shared;
 
 #[cfg(test)]
 mod tests;
 
-pub use collision::*;
-pub use contact::*;
-pub use integrator::*;
+pub use cpu::*;
 pub use particle::*;
-pub use spatial_hash::*;
+pub use shared::*;

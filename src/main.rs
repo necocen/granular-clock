@@ -1,6 +1,5 @@
 mod analysis;
 mod debug;
-mod gpu;
 mod physics;
 mod rendering;
 mod simulation;
@@ -9,20 +8,20 @@ mod ui;
 use bevy::prelude::*;
 
 use analysis::{update_distribution, CurrentDistribution, DistributionHistory};
-use gpu::{apply_gpu_results, GpuInstanceWriterPlugin, GpuPhysicsPlugin};
 // use debug::debug_particles; // 必要時のみ有効化
 use physics::{
+    cpu::{run_physics_substeps, InstanceCpuWriterPlugin},
+    gpu::{apply_gpu_results, GpuInstanceWriterPlugin, GpuPhysicsPlugin},
     init_spatial_hash_grid, ContactHistory, MaterialProperties, ParticleStore, PhysicsConstants,
     WallProperties,
 };
 use rendering::{
     camera_plugin, is_cpu_backend, is_gpu_backend, setup_camera, setup_rendering, spawn_particles,
-    update_container_transforms, GpuInstancingPlugin, InstanceCpuWriterPlugin,
-    RenderExtractResourcesPlugin,
+    update_container_transforms, GpuInstancingPlugin, RenderExtractResourcesPlugin,
 };
-use simulation::{
-    run_physics_substeps, ContainerParams, OscillationParams, PhysicsBackend, SimulationConfig,
-    SimulationSettings, SimulationState, SimulationTimeParams,
+use simulation::common::{
+    ContainerParams, OscillationParams, PhysicsBackend, SimulationConfig, SimulationSettings,
+    SimulationState, SimulationTimeParams,
 };
 use ui::{
     handle_amplitude_buttons, handle_control_buttons, handle_frequency_buttons,

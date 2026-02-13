@@ -6,8 +6,7 @@ use crate::physics::{
     integrate_first_half, integrate_second_half, ContactHistory, MaterialProperties, ParticleStore,
     PhysicsConstants, SpatialHashGrid, WallProperties,
 };
-
-use super::{
+use crate::simulation::{
     advance_oscillation, ContainerParams, OscillationParams, SimulationSettings, SimulationState,
     SimulationTimeParams,
 };

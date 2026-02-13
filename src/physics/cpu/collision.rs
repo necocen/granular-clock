@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 
+use crate::physics::shared::WallProperties;
 use crate::simulation::ContainerParams;
 
 /// 壁との接触力計算結果
@@ -7,30 +8,6 @@ use crate::simulation::ContainerParams;
 pub struct WallContactForce {
     pub force: Vec3,
     pub torque: Vec3,
-}
-
-/// 壁との衝突パラメータ
-#[derive(Resource, Clone, Copy)]
-pub struct WallProperties {
-    /// 壁の剛性（ペナルティ法用）
-    pub stiffness: f32,
-    /// 壁の減衰係数
-    pub damping: f32,
-    /// 壁との摩擦係数
-    pub friction: f32,
-    /// 反発係数（0=完全非弾性、1=完全弾性）
-    pub restitution: f32,
-}
-
-impl Default for WallProperties {
-    fn default() -> Self {
-        Self {
-            stiffness: 10000.0, // ペナルティ剛性（高めに設定して貫通を減らす）
-            damping: 20.0,      // 減衰係数（参考値、実際は質量から計算）
-            friction: 0.6,      // 摩擦係数
-            restitution: 0.5,   // 反発係数（低めに設定）
-        }
-    }
 }
 
 /// 壁との接触力を計算するヘルパー関数
@@ -91,6 +68,7 @@ fn divider_tiebreak_sign(pos: Vec3) -> f32 {
 }
 
 /// 粒子と壁との接触力を計算（ContainerParams + offset）
+#[allow(clippy::too_many_arguments)]
 pub fn compute_wall_contact_force(
     pos: Vec3,
     vel: Vec3,

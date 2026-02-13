@@ -1,6 +1,6 @@
 //! GPU 物理のユニットテスト
 
-use crate::gpu::buffers::{ParticleGpu, SimulationParams};
+use crate::physics::gpu::buffers::{ParticleGpu, SimulationParams};
 use bevy::prelude::Vec3;
 use std::collections::HashMap;
 
@@ -206,7 +206,7 @@ fn test_particle_slice_bytemuck() {
 
 #[test]
 fn test_gpu_particle_data_index_mapping() {
-    use crate::gpu::plugin::GpuParticleData;
+    use crate::physics::gpu::plugin::GpuParticleData;
     use std::sync::Arc;
 
     // GpuParticleData の粒子データがインデックスで正しく対応することを検証
@@ -239,7 +239,7 @@ fn test_gpu_particle_data_index_mapping() {
 
 #[test]
 fn test_readback_data_maps_to_correct_indices() {
-    use crate::gpu::readback::GpuReadbackBuffer;
+    use crate::physics::gpu::readback::GpuReadbackBuffer;
 
     // GPU readback データが正しいインデックスにマッピングされることを検証
     let readback = GpuReadbackBuffer::default();
@@ -386,7 +386,7 @@ fn test_multiple_particles_distinct_after_gpu_step() {
 
 #[test]
 fn test_gpu_particle_data_generation_tracking() {
-    use crate::gpu::plugin::GpuParticleData;
+    use crate::physics::gpu::plugin::GpuParticleData;
     use std::sync::Arc;
 
     // generation カウンターが正しく動作することを検証
@@ -1128,7 +1128,7 @@ fn test_cpu_gpu_trajectory_consistency() {
 
 #[test]
 fn test_readback_buffer_thread_safety() {
-    use crate::gpu::readback::GpuReadbackBuffer;
+    use crate::physics::gpu::readback::GpuReadbackBuffer;
 
     // GpuReadbackBuffer が複数スレッドから安全にアクセスできることを検証
     let readback = GpuReadbackBuffer::default();
@@ -1172,7 +1172,7 @@ fn test_readback_buffer_thread_safety() {
 
 #[cfg(not(target_family = "wasm"))]
 fn inject_shared_types(shader_src: &str) -> String {
-    let types_src = include_str!("../../assets/shaders/physics_types.wgsl")
+    let types_src = include_str!("../../../assets/shaders/physics_types.wgsl")
         .lines()
         .filter(|line| !line.trim_start().starts_with("#define_import_path"))
         .collect::<Vec<_>>()
@@ -1560,25 +1560,25 @@ fn create_test_pipelines(
     let hash_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(&format!("{label_prefix}_hash_keys")),
         source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(inject_shared_types(
-            include_str!("../../assets/shaders/hash_keys.wgsl"),
+            include_str!("../../../assets/shaders/hash_keys.wgsl"),
         ))),
     });
     let cell_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(&format!("{label_prefix}_cell_ranges")),
         source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(inject_shared_types(
-            include_str!("../../assets/shaders/cell_ranges.wgsl"),
+            include_str!("../../../assets/shaders/cell_ranges.wgsl"),
         ))),
     });
     let collision_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(&format!("{label_prefix}_collision")),
         source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(inject_shared_types(
-            include_str!("../../assets/shaders/collision.wgsl"),
+            include_str!("../../../assets/shaders/collision.wgsl"),
         ))),
     });
     let integrate_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(&format!("{label_prefix}_integrate")),
         source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(inject_shared_types(
-            include_str!("../../assets/shaders/integrate.wgsl"),
+            include_str!("../../../assets/shaders/integrate.wgsl"),
         ))),
     });
 
@@ -1603,7 +1603,7 @@ fn create_test_pipelines(
         let bitonic_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some(&format!("{label_prefix}_bitonic_sort")),
             source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(inject_shared_types(
-                include_str!("../../assets/shaders/bitonic_sort.wgsl"),
+                include_str!("../../../assets/shaders/bitonic_sort.wgsl"),
             ))),
         });
         Some(
@@ -1724,7 +1724,8 @@ fn create_test_buffers(
     });
     let cell_ranges = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some(&format!("{label_prefix}_cell_ranges")),
-        size: std::mem::size_of::<crate::gpu::buffers::CellRange>() as u64 * num_cells as u64,
+        size: std::mem::size_of::<crate::physics::gpu::buffers::CellRange>() as u64
+            * num_cells as u64,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
