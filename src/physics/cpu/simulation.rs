@@ -1,6 +1,7 @@
 use bevy::prelude::*;
-use std::collections::HashMap;
+use rayon::prelude::*;
 
+use crate::physics::cpu::contact::{ContactForce, ContactState};
 use crate::physics::cpu::{
     clamp_to_container, clamp_velocity, compute_particle_contact_force, compute_wall_contact_force,
     integrate_first_half, integrate_second_half, ContactHistory, SpatialHashGrid,
@@ -16,18 +17,21 @@ use crate::simulation::{
 
 /// 空間ハッシュグリッドを構築
 fn build_spatial_grid(grid: &SpatialHashGrid, particles: &ParticleStore) {
-    grid.clear();
-    for (i, p) in particles.particles.iter().enumerate() {
-        grid.insert(i, p.position);
-    }
+    grid.rebuild(
+        particles
+            .particles
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (i, p.position)),
+    );
 }
 
 /// 全パーティクルの力・トルクをゼロクリア
 fn clear_forces(particles: &mut ParticleStore) {
-    for p in particles.particles.iter_mut() {
+    particles.particles.par_iter_mut().for_each(|p| {
         p.force = Vec3::ZERO;
         p.torque = Vec3::ZERO;
-    }
+    });
 }
 
 /// パーティクル間の衝突を計算
@@ -38,45 +42,53 @@ fn compute_particle_collisions(
     material: &MaterialProperties,
     dt: f32,
 ) {
+    #[derive(Clone)]
+    struct PairContactResult {
+        i: usize,
+        j: usize,
+        force_i: ContactForce,
+        force_j: ContactForce,
+        contact_state: ContactState,
+    }
+
     let n = particles.particles.len();
     if n < 2 {
         return;
     }
 
-    // セル -> 粒子インデックス群を構築（正確な近傍探索用）
-    let mut cells = Vec::with_capacity(n);
-    let mut cell_map: HashMap<(i32, i32, i32), Vec<usize>> = HashMap::with_capacity(n);
-    for (i, p) in particles.particles.iter().enumerate() {
-        let cell = (
-            (p.position.x / grid.cell_size).floor() as i32,
-            (p.position.y / grid.cell_size).floor() as i32,
-            (p.position.z / grid.cell_size).floor() as i32,
-        );
-        cells.push(cell);
-        cell_map.entry(cell).or_default().push(i);
-    }
-
-    let mut force_accum = vec![Vec3::ZERO; n];
-    let mut torque_accum = vec![Vec3::ZERO; n];
-
-    // 各粒子について 27 近傍セルのみ探索し、j > i で重複を防ぐ
-    for i in 0..n {
-        let (cx, cy, cz) = cells[i];
-        let p_i = &particles.particles[i];
-
-        for &(dx, dy, dz) in SpatialHashGrid::neighbor_offsets() {
-            let neighbor_cell = (cx + dx, cy + dy, cz + dz);
-            let Some(indices) = cell_map.get(&neighbor_cell) else {
-                continue;
-            };
-
-            for &j in indices {
-                if j <= i {
+    // 各粒子について 27 近傍セルのみ探索し、j > i で重複を防ぐ（順序は従来どおり）
+    let pairs: Vec<(usize, usize)> = grid.with_cells(|cell_map| {
+        let mut pairs: Vec<(usize, usize)> = Vec::new();
+        for i in 0..n {
+            let (cx, cy, cz) = grid.cell_index(particles.particles[i].position);
+            for &(dx, dy, dz) in SpatialHashGrid::neighbor_offsets() {
+                let neighbor_cell = (cx + dx, cy + dy, cz + dz);
+                let Some(indices) = cell_map.get(&neighbor_cell) else {
                     continue;
-                }
+                };
 
+                for &j in indices {
+                    if j <= i {
+                        continue;
+                    }
+                    pairs.push((i, j));
+                }
+            }
+        }
+        pairs
+    });
+
+    // 接触計算本体は並列化。既存接触状態は読み取り専用で参照し、
+    // 最終的な加算順序は pairs の順序に揃えて従来の決定性を保つ。
+    let pair_results: Vec<PairContactResult> = {
+        let previous_contacts = &contact_history.contacts;
+        pairs
+            .into_par_iter()
+            .map(|(i, j)| {
+                let p_i = &particles.particles[i];
                 let p_j = &particles.particles[j];
-                let contact_state = contact_history.get_or_create(i, j);
+                let key = ContactHistory::key(i, j);
+                let mut contact_state = previous_contacts.get(&key).cloned().unwrap_or_default();
 
                 let (force_i, force_j) = compute_particle_contact_force(
                     p_i.position,
@@ -90,16 +102,32 @@ fn compute_particle_collisions(
                     p_j.radius,
                     p_j.mass,
                     material,
-                    contact_state,
+                    &mut contact_state,
                     dt,
                 );
 
-                force_accum[i] += force_i.force;
-                torque_accum[i] += force_i.torque;
-                force_accum[j] += force_j.force;
-                torque_accum[j] += force_j.torque;
-            }
-        }
+                PairContactResult {
+                    i,
+                    j,
+                    force_i,
+                    force_j,
+                    contact_state,
+                }
+            })
+            .collect()
+    };
+
+    let mut force_accum = vec![Vec3::ZERO; n];
+    let mut torque_accum = vec![Vec3::ZERO; n];
+
+    for result in pair_results {
+        force_accum[result.i] += result.force_i.force;
+        torque_accum[result.i] += result.force_i.torque;
+        force_accum[result.j] += result.force_j.force;
+        torque_accum[result.j] += result.force_j.torque;
+        contact_history
+            .contacts
+            .insert((result.i, result.j), result.contact_state);
     }
 
     for i in 0..n {
@@ -115,7 +143,7 @@ fn compute_wall_collisions(
     container_offset: f32,
     wall_props: &WallProperties,
 ) {
-    for p in particles.particles.iter_mut() {
+    particles.particles.par_iter_mut().for_each(|p| {
         let wall_force = compute_wall_contact_force(
             p.position,
             p.velocity,
@@ -128,14 +156,14 @@ fn compute_wall_collisions(
         );
         p.force += wall_force.force;
         p.torque += wall_force.torque;
-    }
+    });
 }
 
 /// 位置の積分（Velocity Verlet 前半ステップ）
 fn integrate_positions(particles: &mut ParticleStore, physics: &PhysicsConstants, dt: f32) {
     let gravity = physics.gravity;
 
-    for p in particles.particles.iter_mut() {
+    particles.particles.par_iter_mut().for_each(|p| {
         integrate_first_half(
             &mut p.position,
             &mut p.velocity,
@@ -147,14 +175,14 @@ fn integrate_positions(particles: &mut ParticleStore, physics: &PhysicsConstants
             gravity,
             dt,
         );
-    }
+    });
 }
 
 /// 速度の積分（Velocity Verlet 後半ステップ）
 fn integrate_velocities(particles: &mut ParticleStore, physics: &PhysicsConstants, dt: f32) {
     let gravity = physics.gravity;
 
-    for p in particles.particles.iter_mut() {
+    particles.particles.par_iter_mut().for_each(|p| {
         integrate_second_half(
             &mut p.velocity,
             &mut p.angular_velocity,
@@ -165,7 +193,7 @@ fn integrate_velocities(particles: &mut ParticleStore, physics: &PhysicsConstant
             gravity,
             dt,
         );
-    }
+    });
 }
 
 /// パーティクルをコンテナ内にクランプ
@@ -181,7 +209,7 @@ fn clamp_particles(
     const MAX_LINEAR_VEL: f32 = 10.0;
     const MAX_ANGULAR_VEL: f32 = 100.0;
 
-    for p in particles.particles.iter_mut() {
+    particles.particles.par_iter_mut().for_each(|p| {
         clamp_to_container(&mut p.position, &mut p.velocity, p.radius, box_min, box_max);
         clamp_velocity(
             &mut p.velocity,
@@ -189,7 +217,7 @@ fn clamp_particles(
             MAX_LINEAR_VEL,
             MAX_ANGULAR_VEL,
         );
-    }
+    });
 }
 
 /// 物理サブステップを実行するシステム（exclusive system）

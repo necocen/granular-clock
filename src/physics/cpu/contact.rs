@@ -30,12 +30,6 @@ impl ContactHistory {
         }
     }
 
-    /// 接触状態を取得または作成
-    pub fn get_or_create(&mut self, i: usize, j: usize) -> &mut ContactState {
-        let key = Self::key(i, j);
-        self.contacts.entry(key).or_default()
-    }
-
     /// 非アクティブな接触を削除
     pub fn cleanup(&mut self) {
         self.contacts.retain(|_, state| state.active);

@@ -135,10 +135,7 @@ pub fn setup_rendering(
 }
 
 /// 粒子をスポーン（ParticleStore に追加するだけ。ECS エンティティは作らない）
-pub fn spawn_particles(
-    mut store: ResMut<ParticleStore>,
-    constants: Res<SimulationConstants>,
-) {
+pub fn spawn_particles(mut store: ResMut<ParticleStore>, constants: Res<SimulationConstants>) {
     let config = &constants.config;
     let container = &constants.container;
 
