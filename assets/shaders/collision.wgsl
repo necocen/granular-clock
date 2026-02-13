@@ -1,6 +1,6 @@
 // 衝突検出・接触力計算シェーダー
 
-#import granular_clock::physics_types::{Particle, Params}
+#import granular_clock::physics_types::{Particle, Params, grid_cell_from_pos, grid_hash_cell, grid_cell_in_bounds}
 
 /// 接触力とトルクの結果
 struct ContactResult {
@@ -15,23 +15,6 @@ struct ContactResult {
 @group(2) @binding(2) var<storage, read_write> cell_ranges: array<vec2<u32>>;
 @group(3) @binding(0) var<storage, read_write> forces: array<vec4<f32>>;
 @group(3) @binding(1) var<storage, read_write> torques: array<vec4<f32>>;
-
-fn hash_cell(cell: vec3<i32>) -> u32 {
-    let dim = i32(params.grid_dim);
-    let half = dim / 2;
-    let shifted = cell + vec3<i32>(half, half, half);
-    let c = vec3<i32>(
-        clamp(shifted.x, 0, dim - 1),
-        clamp(shifted.y, 0, dim - 1),
-        clamp(shifted.z, 0, dim - 1)
-    );
-    return u32((c.z * dim + c.y) * dim + c.x);
-}
-
-fn get_cell(pos: vec3<f32>) -> vec3<i32> {
-    // CPU と同じ原点基準セル座標
-    return vec3<i32>(floor(pos / params.cell_size));
-}
 
 fn compute_wall_normal_force(overlap_in: f32, v_n: f32, radius: f32, mass_inv: f32) -> f32 {
     if (overlap_in <= 0.0) {
@@ -358,11 +341,7 @@ fn collision_response(@builtin(global_invocation_id) gid: vec3<u32>) {
     var total_force = vec3<f32>(0.0);
     var total_torque = vec3<f32>(0.0);
 
-    let cell = get_cell(p.pos);
-    let dim = i32(params.grid_dim);
-    let half = dim / 2;
-    let min_cell = -half;
-    let max_cell = min_cell + dim;
+    let cell = grid_cell_from_pos(p.pos, params.cell_size);
 
     // 27セル近傍探索
     for (var dz: i32 = -1; dz <= 1; dz++) {
@@ -371,15 +350,11 @@ fn collision_response(@builtin(global_invocation_id) gid: vec3<u32>) {
                 let nc = cell + vec3<i32>(dx, dy, dz);
 
                 // 範囲外チェック
-                if (
-                    nc.x < min_cell || nc.x >= max_cell ||
-                    nc.y < min_cell || nc.y >= max_cell ||
-                    nc.z < min_cell || nc.z >= max_cell
-                ) {
+                if (!grid_cell_in_bounds(nc, params.grid_dim)) {
                     continue;
                 }
 
-                let cell_key = hash_cell(nc);
+                let cell_key = grid_hash_cell(nc, params.grid_dim);
                 let range = cell_ranges[cell_key];
                 let start = min(range.x, params.num_particles);
                 let end = min(range.y, params.num_particles);

@@ -1,7 +1,7 @@
 // セル範囲構築シェーダー
 // ソート済みの keys 配列から各セルの開始・終了インデックスを計算
 
-#import granular_clock::physics_types::{Particle, Params}
+#import granular_clock::physics_types::{Particle, Params, grid_num_cells}
 
 @group(0) @binding(0) var<uniform> params: Params;
 @group(1) @binding(0) var<storage, read_write> keys: array<u32>;
@@ -14,7 +14,7 @@ fn build_cell_ranges(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    let num_cells = params.grid_dim * params.grid_dim * params.grid_dim;
+    let num_cells = grid_num_cells(params.grid_dim);
     let key = keys[id];
 
     // 各セルの開始インデックス thread のみが start/end を一括で書く。

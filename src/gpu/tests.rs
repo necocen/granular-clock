@@ -1121,10 +1121,18 @@ fn inject_shared_types(shader_src: &str) -> String {
         .filter(|line| !line.trim_start().starts_with("#define_import_path"))
         .collect::<Vec<_>>()
         .join("\n");
-    shader_src.replace(
-        "#import granular_clock::physics_types::{Particle, Params}",
-        &types_src,
-    )
+
+    let body = shader_src
+        .lines()
+        .filter(|line| {
+            !line
+                .trim_start()
+                .starts_with("#import granular_clock::physics_types::")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!("{types_src}\n{body}")
 }
 
 #[cfg(not(target_family = "wasm"))]
