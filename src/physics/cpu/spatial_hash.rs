@@ -1,5 +1,4 @@
 use bevy::prelude::*;
-use parking_lot::RwLock;
 use std::collections::HashMap;
 
 use crate::simulation::constants::{GridSettings, SimulationConstants};
@@ -11,7 +10,8 @@ pub type GridCell = (i32, i32, i32);
 pub struct SpatialHashGrid {
     pub cell_size: f32,
     pub table_size: usize,
-    cells: RwLock<HashMap<GridCell, Vec<usize>>>,
+    cells: HashMap<GridCell, Vec<usize>>,
+    particle_cells: Vec<GridCell>,
 }
 
 impl Default for SpatialHashGrid {
@@ -28,7 +28,8 @@ impl SpatialHashGrid {
         Self {
             cell_size,
             table_size,
-            cells: RwLock::new(HashMap::with_capacity(table_size)),
+            cells: HashMap::with_capacity(table_size),
+            particle_cells: Vec::new(),
         }
     }
 
@@ -41,22 +42,30 @@ impl SpatialHashGrid {
     }
 
     /// 粒子位置からセルマップを再構築
-    pub fn rebuild<I>(&self, positions: I)
+    pub fn rebuild<I>(&mut self, positions: I)
     where
         I: IntoIterator<Item = (usize, Vec3)>,
     {
-        let mut cell_map: HashMap<GridCell, Vec<usize>> = HashMap::with_capacity(self.table_size);
+        self.cells.clear();
+        self.particle_cells.clear();
         for (index, pos) in positions {
             let cell = self.cell_index(pos);
-            cell_map.entry(cell).or_default().push(index);
+            if index >= self.particle_cells.len() {
+                self.particle_cells.resize(index + 1, (0, 0, 0));
+            }
+            self.particle_cells[index] = cell;
+            self.cells.entry(cell).or_default().push(index);
         }
-        *self.cells.write() = cell_map;
     }
 
     /// 読み取り専用でセルマップにアクセス
     pub fn with_cells<R>(&self, f: impl FnOnce(&HashMap<GridCell, Vec<usize>>) -> R) -> R {
-        let cells = self.cells.read();
-        f(&cells)
+        f(&self.cells)
+    }
+
+    /// 粒子インデックスに対応するセル座標を返す（直近 rebuild 結果）
+    pub fn particle_cell(&self, index: usize) -> GridCell {
+        self.particle_cells[index]
     }
 }
 

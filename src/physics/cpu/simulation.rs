@@ -16,7 +16,7 @@ use crate::simulation::{
 };
 
 /// 空間ハッシュグリッドを構築
-fn build_spatial_grid(grid: &SpatialHashGrid, particles: &ParticleStore) {
+fn build_spatial_grid(grid: &mut SpatialHashGrid, particles: &ParticleStore) {
     grid.rebuild(
         particles
             .particles
@@ -42,7 +42,7 @@ fn compute_particle_collisions(
     material: &MaterialProperties,
     dt: f32,
 ) {
-    #[derive(Clone)]
+    #[derive(Clone, Default)]
     struct PairContactResult {
         i: usize,
         j: usize,
@@ -59,8 +59,9 @@ fn compute_particle_collisions(
     // 各粒子について 27 近傍セルのみ探索し、j > i で重複を防ぐ（順序は従来どおり）
     let pairs: Vec<(usize, usize)> = grid.with_cells(|cell_map| {
         let mut pairs: Vec<(usize, usize)> = Vec::new();
+        pairs.reserve(n);
         for i in 0..n {
-            let (cx, cy, cz) = grid.cell_index(particles.particles[i].position);
+            let (cx, cy, cz) = grid.particle_cell(i);
             for &(dx, dy, dz) in SpatialHashGrid::neighbor_offsets() {
                 let neighbor_cell = (cx + dx, cy + dy, cz + dz);
                 let Some(indices) = cell_map.get(&neighbor_cell) else {
@@ -120,7 +121,7 @@ fn compute_particle_collisions(
     let mut force_accum = vec![Vec3::ZERO; n];
     let mut torque_accum = vec![Vec3::ZERO; n];
 
-    for result in pair_results {
+    for result in pair_results.iter() {
         force_accum[result.i] += result.force_i.force;
         torque_accum[result.i] += result.force_i.torque;
         force_accum[result.j] += result.force_j.force;
@@ -235,9 +236,9 @@ pub fn run_physics_substeps(world: &mut World) {
     let mut particles = world.remove_resource::<ParticleStore>().unwrap();
     let mut contact_history = world.remove_resource::<ContactHistory>().unwrap();
     let mut sim_state = world.remove_resource::<SimulationState>().unwrap();
+    let mut grid = world.remove_resource::<SpatialHashGrid>().unwrap();
 
     // 不変リソースはコピー（Copy 型なので安全かつ参照の衝突を回避）
-    let grid = world.resource::<SpatialHashGrid>();
     let material = constants.material;
     let physics = constants.physics;
     let wall_props = constants.wall;
@@ -247,9 +248,9 @@ pub fn run_physics_substeps(world: &mut World) {
 
     for _ in 0..substeps {
         advance_oscillation(&mut sim_state, osc_params, dt);
-        build_spatial_grid(grid, &particles);
+        build_spatial_grid(&mut grid, &particles);
         clear_forces(&mut particles);
-        compute_particle_collisions(&mut particles, grid, &mut contact_history, &material, dt);
+        compute_particle_collisions(&mut particles, &grid, &mut contact_history, &material, dt);
         compute_wall_collisions(
             &mut particles,
             container_params,
@@ -259,9 +260,9 @@ pub fn run_physics_substeps(world: &mut World) {
         integrate_positions(&mut particles, &physics, dt);
         clamp_particles(&mut particles, container_params, sim_state.container_offset);
         // 後半ステップの力計算は更新後の位置に対して行う
-        build_spatial_grid(grid, &particles);
+        build_spatial_grid(&mut grid, &particles);
         clear_forces(&mut particles);
-        compute_particle_collisions(&mut particles, grid, &mut contact_history, &material, dt);
+        compute_particle_collisions(&mut particles, &grid, &mut contact_history, &material, dt);
         compute_wall_collisions(
             &mut particles,
             container_params,
@@ -278,4 +279,5 @@ pub fn run_physics_substeps(world: &mut World) {
     world.insert_resource(particles);
     world.insert_resource(contact_history);
     world.insert_resource(sim_state);
+    world.insert_resource(grid);
 }

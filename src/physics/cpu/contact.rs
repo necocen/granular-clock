@@ -5,7 +5,7 @@ use std::f32::consts::PI;
 use crate::simulation::constants::MaterialProperties;
 
 /// 接触履歴
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Copy)]
 pub struct ContactState {
     /// 最後の法線方向
     pub last_normal: Vec3,
