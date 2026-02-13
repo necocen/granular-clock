@@ -4,19 +4,19 @@ use bevy::ui::Checked;
 use crate::analysis::DistributionHistory;
 use crate::physics::{ParticleSize, ParticleStore};
 use crate::simulation::{
-    Container, OscillationParams, PhysicsBackend, SimulationConfig, SimulationSettings,
-    SimulationState, SimulationTime,
+    ContainerParams, OscillationParams, PhysicsBackend, SimulationConfig, SimulationSettings,
+    SimulationState,
 };
 
 use super::markers::*;
 
 /// シミュレーション時間の表示を更新
 pub fn update_simulation_time_display(
-    sim_time: Res<SimulationTime>,
+    sim_state: Res<SimulationState>,
     mut time_text: Query<&mut Text, With<SimulationTimeText>>,
 ) {
     if let Ok(mut text) = time_text.single_mut() {
-        let elapsed = sim_time.elapsed;
+        let elapsed = sim_state.elapsed;
         text.0 = format!("Time: {:.1} s", elapsed);
     }
 }
@@ -215,17 +215,16 @@ pub fn update_button_colors(
 /// シミュレーションのリセットを処理
 pub fn handle_reset(
     mut sim_state: ResMut<SimulationState>,
-    mut sim_time: ResMut<SimulationTime>,
     config: Res<SimulationConfig>,
     mut store: ResMut<ParticleStore>,
-    container: Res<Container>,
+    container: Res<ContainerParams>,
 ) {
     if !sim_state.reset_requested {
         return;
     }
 
     sim_state.reset_requested = false;
-    sim_time.reset();
+    sim_state.reset_time();
 
     // 既存の粒子を削除
     store.clear();

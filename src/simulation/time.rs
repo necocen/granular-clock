@@ -10,33 +10,18 @@ pub enum PhysicsBackend {
     Gpu,
 }
 
-/// シミュレーション時間（リアルタイムとは独立）
-#[derive(Resource)]
-pub struct SimulationTime {
-    /// 経過したシミュレーション時間（秒）
-    pub elapsed: f64,
+/// シミュレーション時間の不変パラメータ
+#[derive(Resource, Clone, Copy)]
+pub struct SimulationTimeParams {
     /// 固定タイムステップ（秒）
     pub dt: f32,
 }
 
-impl Default for SimulationTime {
+impl Default for SimulationTimeParams {
     fn default() -> Self {
         Self {
-            elapsed: 0.0,
             dt: 1.0 / 2500.0, // 2500Hz相当の細かいタイムステップ
         }
-    }
-}
-
-impl SimulationTime {
-    /// 1ステップ進める
-    pub fn step(&mut self) {
-        self.elapsed += self.dt as f64;
-    }
-
-    /// リセット
-    pub fn reset(&mut self) {
-        self.elapsed = 0.0;
     }
 }
 

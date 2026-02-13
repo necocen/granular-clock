@@ -1,11 +1,63 @@
 use bevy::prelude::*;
 
-use crate::physics::collision::{compute_wall_contact_force, WallProperties};
+use crate::physics::collision::{
+    compute_wall_contact_force as compute_wall_contact_force_core, WallContactForce,
+    WallProperties,
+};
 use crate::physics::contact::{compute_particle_contact_force, ContactState, MaterialProperties};
 use crate::physics::integrator::{
     clamp_to_container, clamp_velocity, integrate_first_half, integrate_second_half,
 };
-use crate::simulation::Container;
+use crate::simulation::ContainerParams;
+
+#[derive(Clone)]
+struct Container {
+    half_extents: Vec3,
+    divider_height: f32,
+    divider_thickness: f32,
+    base_position: Vec3,
+    current_offset: f32,
+}
+
+impl Default for Container {
+    fn default() -> Self {
+        let params = ContainerParams::default();
+        Self {
+            half_extents: params.half_extents,
+            divider_height: params.divider_height,
+            divider_thickness: params.divider_thickness,
+            base_position: params.base_position,
+            current_offset: 0.0,
+        }
+    }
+}
+
+fn compute_wall_contact_force(
+    pos: Vec3,
+    vel: Vec3,
+    omega: Vec3,
+    radius: f32,
+    mass: f32,
+    container: &Container,
+    wall_props: &WallProperties,
+) -> WallContactForce {
+    let params = ContainerParams {
+        half_extents: container.half_extents,
+        divider_height: container.divider_height,
+        divider_thickness: container.divider_thickness,
+        base_position: container.base_position,
+    };
+    compute_wall_contact_force_core(
+        pos,
+        vel,
+        omega,
+        radius,
+        mass,
+        &params,
+        container.current_offset,
+        wall_props,
+    )
+}
 
 /// 壁との衝突力テスト：床に接触した粒子は上向きの力を受ける
 #[test]

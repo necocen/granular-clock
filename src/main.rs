@@ -21,8 +21,8 @@ use rendering::{
     RenderExtractResourcesPlugin,
 };
 use simulation::{
-    run_physics_substeps, Container, OscillationParams, PhysicsBackend, SimulationConfig,
-    SimulationSettings, SimulationState, SimulationTime,
+    run_physics_substeps, ContainerParams, OscillationParams, PhysicsBackend, SimulationConfig,
+    SimulationSettings, SimulationState, SimulationTimeParams,
 };
 use ui::{
     handle_amplitude_buttons, handle_control_buttons, handle_frequency_buttons,
@@ -53,7 +53,7 @@ fn main() {
         .add_plugins(GpuInstancingPlugin)
         // リソース
         .insert_resource(SimulationConfig::default())
-        .insert_resource(Container::default())
+        .insert_resource(ContainerParams::default())
         .insert_resource(OscillationParams::default())
         .insert_resource(PhysicsConstants::default())
         .insert_resource(MaterialProperties::default())
@@ -63,7 +63,7 @@ fn main() {
         .insert_resource(DistributionHistory::default())
         .insert_resource(CurrentDistribution::default())
         .insert_resource(SimulationState::default())
-        .insert_resource(SimulationTime::default())
+        .insert_resource(SimulationTimeParams::default())
         .insert_resource(SimulationSettings::default())
         .insert_resource(ParticleStore::default())
         // スタートアップシステム（カメラはPreStartupで先に生成）

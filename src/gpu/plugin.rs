@@ -14,8 +14,8 @@ use crate::physics::{
     MaterialProperties, ParticleSize, ParticleStore, PhysicsConstants, WallProperties,
 };
 use crate::simulation::{
-    advance_oscillation, Container, OscillationParams, PhysicsBackend, SimulationSettings,
-    SimulationState, SimulationTime,
+    advance_oscillation, ContainerParams, OscillationParams, PhysicsBackend, SimulationSettings,
+    SimulationState, SimulationTimeParams,
 };
 
 use super::{
@@ -152,34 +152,34 @@ fn init_pipelines(
 
 /// コンテナのオフセットを更新
 fn update_container_params(
-    container: Res<Container>,
+    container_params: Res<ContainerParams>,
     osc_params: Res<OscillationParams>,
+    sim_state: Res<SimulationState>,
     mut params: ResMut<ExtractedContainerParams>,
 ) {
     // デフォルト（フレーム基準）オフセット。GPUノード側でサブステップごとに上書きする。
-    params.container_offset = container.base_position.y + container.current_offset;
-    params.base_position_y = container.base_position.y;
+    params.container_offset = container_params.base_position.y + sim_state.container_offset;
+    params.base_position_y = container_params.base_position.y;
     params.oscillation_enabled = osc_params.enabled;
     params.oscillation_amplitude = osc_params.amplitude;
     params.oscillation_frequency = osc_params.frequency;
-    params.oscillation_phase_start = osc_params.frame_start_phase;
+    params.oscillation_phase_start = sim_state.oscillation_frame_start_phase;
 }
 
 /// GPU モード用: CPU と同じ位相更新ロジックで振動を進める。
 fn update_oscillation_for_gpu(
-    mut container: ResMut<Container>,
-    mut params: ResMut<OscillationParams>,
-    sim_time: Res<SimulationTime>,
+    mut sim_state: ResMut<SimulationState>,
+    params: Res<OscillationParams>,
+    time_params: Res<SimulationTimeParams>,
     settings: Res<SimulationSettings>,
-    sim_state: Res<SimulationState>,
-) {
+ ) {
     if sim_state.paused {
         return;
     }
 
-    params.frame_start_phase = params.phase;
+    sim_state.oscillation_frame_start_phase = sim_state.oscillation_phase;
     for _ in 0..settings.substeps_per_frame {
-        advance_oscillation(&mut container, &mut params, sim_time.dt);
+        advance_oscillation(&mut sim_state, &params, time_params.dt);
     }
 }
 
@@ -187,8 +187,9 @@ fn update_oscillation_for_gpu(
 #[allow(clippy::too_many_arguments)]
 fn extract_particle_data(
     store: Res<ParticleStore>,
-    container: Res<Container>,
-    sim_time: Res<SimulationTime>,
+    container_params: Res<ContainerParams>,
+    sim_state: Res<SimulationState>,
+    time_params: Res<SimulationTimeParams>,
     material: Res<MaterialProperties>,
     wall_props: Res<WallProperties>,
     physics: Res<PhysicsConstants>,
@@ -233,12 +234,12 @@ fn extract_particle_data(
 
     // パラメータを更新（各種リソースから値を取得）
     let world_half = [
-        container.half_extents.x,
-        container.half_extents.y,
-        container.half_extents.z,
+        container_params.half_extents.x,
+        container_params.half_extents.y,
+        container_params.half_extents.z,
     ];
     gpu_data.params = SimulationParams {
-        dt: sim_time.dt,
+        dt: time_params.dt,
         gravity: physics.gravity.y, // Vec3のY成分を使用
         cell_size: grid_settings.cell_size,
         grid_dim: grid_settings.compute_grid_dim(world_half),
@@ -248,12 +249,12 @@ fn extract_particle_data(
         poisson_ratio: material.poisson_ratio,
         restitution: material.restitution,
         friction: material.friction,
-        container_offset: container.base_position.y + container.current_offset,
-        divider_height: container.divider_height,
-        container_half_x: container.half_extents.x,
-        container_half_y: container.half_extents.y,
-        container_half_z: container.half_extents.z,
-        divider_thickness: container.divider_thickness,
+        container_offset: container_params.base_position.y + sim_state.container_offset,
+        divider_height: container_params.divider_height,
+        container_half_x: container_params.half_extents.x,
+        container_half_y: container_params.half_extents.y,
+        container_half_z: container_params.half_extents.z,
+        divider_thickness: container_params.divider_thickness,
         rolling_friction: material.rolling_friction,
         wall_restitution: wall_props.restitution,
         wall_friction: wall_props.friction,
@@ -271,8 +272,8 @@ fn extract_particle_data(
 /// シミュレーション時間を更新（GPU物理実行時）
 fn update_simulation_time(
     mut gpu_data: ResMut<GpuParticleData>,
-    sim_state: Res<SimulationState>,
-    mut sim_time: ResMut<SimulationTime>,
+    mut sim_state: ResMut<SimulationState>,
+    time_params: Res<SimulationTimeParams>,
     settings: Res<SimulationSettings>,
     backend: Res<PhysicsBackend>,
 ) {
@@ -293,7 +294,7 @@ fn update_simulation_time(
     // GPU物理が初期化済みの場合、サブステップ数分だけシミュレーション時間を進める
     if gpu_data.initialized {
         for _ in 0..settings.substeps_per_frame {
-            sim_time.step();
+            sim_state.step_time(time_params.dt);
         }
     }
 }

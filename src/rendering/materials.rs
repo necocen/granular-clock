@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::physics::{ParticleSize, ParticleStore};
-use crate::simulation::{Container, SimulationConfig};
+use crate::simulation::{ContainerParams, SimulationConfig, SimulationState};
 
 /// 粒子用のメッシュハンドル
 #[derive(Resource)]
@@ -21,7 +21,7 @@ pub fn setup_rendering(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    container: Res<Container>,
+    container: Res<ContainerParams>,
 ) {
     // 粒子用の球メッシュ（低ポリゴン）
     let sphere_mesh = meshes.add(Sphere::new(1.0).mesh().ico(2).unwrap());
@@ -136,7 +136,7 @@ pub fn setup_rendering(
 pub fn spawn_particles(
     mut store: ResMut<ParticleStore>,
     config: Res<SimulationConfig>,
-    container: Res<Container>,
+    container: Res<ContainerParams>,
 ) {
     use rand::Rng;
     let mut rng = rand::rng();
@@ -176,7 +176,8 @@ pub fn spawn_particles(
 
 /// コンテナの位置を更新
 pub fn update_container_transforms(
-    container: Res<Container>,
+    container: Res<ContainerParams>,
+    sim_state: Res<SimulationState>,
     mut transforms: Query<&mut Transform>,
     entities: Option<Res<ContainerEntities>>,
 ) {
@@ -184,7 +185,7 @@ pub fn update_container_transforms(
         return;
     };
 
-    let offset = Vec3::Y * container.current_offset;
+    let offset = Vec3::Y * sim_state.container_offset;
 
     // 床を更新
     if let Ok(mut transform) = transforms.get_mut(entities.floor) {

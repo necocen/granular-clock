@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use std::collections::VecDeque;
 
 use crate::physics::{ParticleSize, ParticleStore};
-use crate::simulation::Container;
+use crate::simulation::{ContainerParams, SimulationState};
 
 /// 粒子分布の履歴
 #[derive(Resource)]
@@ -91,10 +91,10 @@ impl CurrentDistribution {
 /// 分布を更新するシステム
 pub fn update_distribution(
     store: Res<ParticleStore>,
-    container: Res<Container>,
+    container: Res<ContainerParams>,
     mut current: ResMut<CurrentDistribution>,
     mut history: ResMut<DistributionHistory>,
-    sim_time: Res<crate::simulation::SimulationTime>,
+    sim_state: Res<SimulationState>,
 ) {
     // カウントをリセット
     current.left_large = 0;
@@ -118,7 +118,7 @@ pub fn update_distribution(
     // 履歴を更新（サンプリング間隔を考慮）
     let total_large = current.total_large();
     let total_small = current.total_small();
-    let elapsed = sim_time.elapsed;
+    let elapsed = sim_state.elapsed;
 
     // サンプリング間隔が経過した場合のみ記録
     if (total_large > 0 || total_small > 0)

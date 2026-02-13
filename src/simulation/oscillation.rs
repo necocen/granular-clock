@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use std::f32::consts::PI;
 
-use super::Container;
+use super::SimulationState;
 
 const TWO_PI: f32 = 2.0 * PI;
 
@@ -12,10 +12,6 @@ pub struct OscillationParams {
     pub amplitude: f32,
     /// 周波数 (Hz)
     pub frequency: f32,
-    /// 現在の位相 (rad)
-    pub phase: f32,
-    /// 現在フレームのサブステップ開始時位相 (rad)
-    pub frame_start_phase: f32,
     /// 振動が有効かどうか
     pub enabled: bool,
 }
@@ -25,8 +21,6 @@ impl Default for OscillationParams {
         Self {
             amplitude: 0.03, // 30 mm（非常に穏やかな振動）
             frequency: 5.0,  // 5 Hz（低周波）
-            phase: 0.0,
-            frame_start_phase: 0.0,
             enabled: true,
         }
     }
@@ -63,10 +57,14 @@ pub fn oscillation_displacement(enabled: bool, amplitude: f32, phase: f32) -> f3
 }
 
 /// 振動位相を 1 ステップ進め、コンテナオフセットを更新する（CPU/GPU 共通）。
-pub fn advance_oscillation(container: &mut Container, params: &mut OscillationParams, dt: f32) {
+pub fn advance_oscillation(
+    sim_state: &mut SimulationState,
+    params: &OscillationParams,
+    dt: f32,
+) {
     if params.enabled {
-        advance_oscillation_phase(&mut params.phase, params.frequency, dt);
+        advance_oscillation_phase(&mut sim_state.oscillation_phase, params.frequency, dt);
     }
-    container.current_offset =
-        oscillation_displacement(params.enabled, params.amplitude, params.phase);
+    sim_state.container_offset =
+        oscillation_displacement(params.enabled, params.amplitude, sim_state.oscillation_phase);
 }

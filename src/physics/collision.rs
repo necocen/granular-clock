@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::simulation::Container;
+use crate::simulation::ContainerParams;
 
 /// 壁との接触力計算結果
 #[derive(Debug, Clone, Copy, Default)]
@@ -90,23 +90,24 @@ fn divider_tiebreak_sign(pos: Vec3) -> f32 {
     }
 }
 
-/// 粒子と壁との接触力を計算
+/// 粒子と壁との接触力を計算（ContainerParams + offset）
 pub fn compute_wall_contact_force(
     pos: Vec3,
     vel: Vec3,
     omega: Vec3,
     radius: f32,
     mass: f32,
-    container: &Container,
+    container_params: &ContainerParams,
+    container_offset: f32,
     wall_props: &WallProperties,
 ) -> WallContactForce {
     let mut force = Vec3::ZERO;
     let mut torque = Vec3::ZERO;
 
     // コンテナの現在位置（振動を考慮）
-    let box_offset = Vec3::Y * container.current_offset;
-    let box_min = container.base_position - container.half_extents + box_offset;
-    let box_max = container.base_position + container.half_extents + box_offset;
+    let box_offset = Vec3::Y * container_offset;
+    let box_min = container_params.base_position - container_params.half_extents + box_offset;
+    let box_max = container_params.base_position + container_params.half_extents + box_offset;
 
     // 床との接触（最も重要）
     let floor_y = box_min.y;
@@ -219,11 +220,11 @@ pub fn compute_wall_contact_force(
     }
 
     // 仕切りとの接触（壁よりソフトな制約）
-    let divider_top = floor_y + container.divider_height;
+    let divider_top = floor_y + container_params.divider_height;
 
     // 仕切りより下にいる場合のみ接触チェック
     if pos.y - radius < divider_top {
-        let half_thickness = container.divider_thickness / 2.0;
+        let half_thickness = container_params.divider_thickness / 2.0;
         let dist_from_center = pos.x.abs();
         let dist_to_face = dist_from_center - half_thickness;
         let raw_overlap = radius - dist_to_face;

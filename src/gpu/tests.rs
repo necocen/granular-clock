@@ -5,10 +5,66 @@ use bevy::prelude::Vec3;
 use std::collections::HashMap;
 
 use crate::physics::{
-    clamp_to_container, clamp_velocity, compute_particle_contact_force, compute_wall_contact_force,
-    integrate_first_half, integrate_second_half, ContactState, MaterialProperties, WallProperties,
+    clamp_to_container, clamp_velocity, compute_particle_contact_force, integrate_first_half,
+    integrate_second_half, ContactState, MaterialProperties, WallContactForce, WallProperties,
 };
-use crate::simulation::Container;
+use crate::physics::compute_wall_contact_force as compute_wall_contact_force_core;
+use crate::simulation::ContainerParams;
+
+#[derive(Clone)]
+struct Container {
+    half_extents: Vec3,
+    divider_height: f32,
+    divider_thickness: f32,
+    base_position: Vec3,
+    current_offset: f32,
+}
+
+impl Default for Container {
+    fn default() -> Self {
+        let params = ContainerParams::default();
+        Self {
+            half_extents: params.half_extents,
+            divider_height: params.divider_height,
+            divider_thickness: params.divider_thickness,
+            base_position: params.base_position,
+            current_offset: 0.0,
+        }
+    }
+}
+
+impl Container {
+    fn floor_y(&self) -> f32 {
+        self.base_position.y - self.half_extents.y + self.current_offset
+    }
+}
+
+fn compute_wall_contact_force(
+    pos: Vec3,
+    vel: Vec3,
+    omega: Vec3,
+    radius: f32,
+    mass: f32,
+    container: &Container,
+    wall_props: &WallProperties,
+) -> WallContactForce {
+    let params = ContainerParams {
+        half_extents: container.half_extents,
+        divider_height: container.divider_height,
+        divider_thickness: container.divider_thickness,
+        base_position: container.base_position,
+    };
+    compute_wall_contact_force_core(
+        pos,
+        vel,
+        omega,
+        radius,
+        mass,
+        &params,
+        container.current_offset,
+        wall_props,
+    )
+}
 
 #[test]
 fn test_particle_gpu_size_and_alignment() {
@@ -947,7 +1003,7 @@ fn test_cpu_gpu_contact_force_consistency() {
 /// CPU と GPU でシミュレーションを N ステップ走らせて軌跡を比較するテスト
 #[test]
 fn test_cpu_gpu_trajectory_consistency() {
-    let dt = 1.0 / 5000.0; // SimulationTime::default().dt
+    let dt = 1.0 / 5000.0; // runtime dt
     let radius = 0.01;
     let mass = 1.0 / 95.493_f32;
     let mass_inv = 95.493_f32;
@@ -1902,10 +1958,8 @@ fn map_read_buffer_blocking(
 #[ignore = "requires native GPU adapter/device and runs real compute passes"]
 fn test_gpu_e2e_matches_cpu_single_particle() {
     use crate::physics::{
-        clamp_to_container, clamp_velocity, compute_wall_contact_force, integrate_first_half,
-        integrate_second_half,
+        clamp_to_container, clamp_velocity, integrate_first_half, integrate_second_half,
     };
-    use crate::simulation::Container;
     use std::f32::consts::PI;
 
     pollster::block_on(async {
