@@ -23,7 +23,7 @@ pub struct DistributionHistory {
 
 impl Default for DistributionHistory {
     fn default() -> Self {
-        Self::new(600, 0.5) // 600サンプル x 0.5秒 = 300秒（5分）分
+        Self::new(600, 0.2) // 600サンプル x 0.2秒 = 120秒（2分）分
     }
 }
 

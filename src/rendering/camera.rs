@@ -1,6 +1,7 @@
 use bevy::camera_controller::free_camera::{FreeCamera, FreeCameraPlugin};
 use bevy::prelude::*;
 use bevy::render::view::NoIndirectDrawing;
+use bevy_egui::PrimaryEguiContext;
 
 /// メインカメラのマーカー
 #[derive(Component)]
@@ -16,6 +17,8 @@ pub fn setup_camera(mut commands: Commands) {
     commands.spawn((
         MainCamera,
         Camera3d::default(),
+        // Attach Egui explicitly to avoid relying on auto-created primary context selection.
+        PrimaryEguiContext,
         FreeCamera::default(),
         Transform::from_xyz(0.65, 0.5, 0.65).looking_at(Vec3::new(0.0, 0.075, 0.0), Vec3::Y),
         NoIndirectDrawing,
