@@ -15,6 +15,53 @@ use crate::simulation::{
 };
 
 const MAX_GRAPH_POINTS: usize = 600;
+const CONTROL_WINDOW_WIDTH: f32 = 360.0;
+const DISTRIBUTION_WINDOW_WIDTH: f32 = 440.0;
+
+const COLOR_PANEL_BG: egui::Color32 = egui::Color32::from_rgb(18, 22, 30);
+const COLOR_PANEL_BORDER: egui::Color32 = egui::Color32::from_rgb(60, 68, 84);
+const COLOR_SECTION_BG: egui::Color32 = egui::Color32::from_rgb(30, 36, 48);
+const COLOR_GPU: egui::Color32 = egui::Color32::from_rgb(106, 185, 255);
+const COLOR_CPU: egui::Color32 = egui::Color32::from_rgb(255, 176, 96);
+const COLOR_ACCENT: egui::Color32 = egui::Color32::from_rgb(128, 210, 255);
+const COLOR_RESET: egui::Color32 = egui::Color32::from_rgb(178, 72, 72);
+
+fn section_frame() -> egui::Frame {
+    egui::Frame {
+        fill: COLOR_SECTION_BG,
+        stroke: egui::Stroke::new(1.0, COLOR_PANEL_BORDER),
+        corner_radius: egui::CornerRadius::same(8),
+        inner_margin: egui::Margin::symmetric(10, 8),
+        ..Default::default()
+    }
+}
+
+fn full_width_section(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
+    let full_width = ui.available_width();
+    ui.allocate_ui_with_layout(
+        egui::vec2(full_width, 0.0),
+        egui::Layout::top_down(egui::Align::Min),
+        |ui| {
+            section_frame().show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                add_contents(ui);
+            });
+        },
+    );
+}
+
+fn status_chip(ui: &mut egui::Ui, text: &str, color: egui::Color32) {
+    egui::Frame {
+        fill: color.gamma_multiply(0.18),
+        stroke: egui::Stroke::new(1.0, color),
+        corner_radius: egui::CornerRadius::same(6),
+        inner_margin: egui::Margin::symmetric(8, 4),
+        ..Default::default()
+    }
+    .show(ui, |ui| {
+        ui.label(egui::RichText::new(text).color(color).strong());
+    });
+}
 
 pub struct UiPlugin;
 
@@ -48,67 +95,132 @@ fn draw_control_panel_egui(
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
 
-    egui::Window::new("Simulation Settings")
+    egui::Window::new(egui::RichText::new("Simulation Settings").strong())
         .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 10.0))
+        .default_width(CONTROL_WINDOW_WIDTH)
+        .collapsible(false)
         .resizable(false)
+        .frame(egui::Frame {
+            fill: COLOR_PANEL_BG,
+            stroke: egui::Stroke::new(1.0, COLOR_PANEL_BORDER),
+            corner_radius: egui::CornerRadius::same(10),
+            inner_margin: egui::Margin::same(12),
+            ..Default::default()
+        })
         .show(ctx, |ui| {
-            ui.label(format!("Time: {:.1} s", sim_state.elapsed));
-
-            let dt = time.delta_secs();
-            if dt > 0.0 {
-                let fps = 1.0 / dt;
-                let sim_steps = fps * constants.settings.substeps_per_frame as f32;
-                ui.label(format!("FPS: {:.0}  Sim: {:.0} steps/s", fps, sim_steps));
-            } else {
-                ui.label("FPS: --  Sim: -- steps/s");
-            }
-
-            ui.separator();
-
-            ui.checkbox(&mut constants.oscillation.enabled, "Oscillation");
+            ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
 
             ui.horizontal(|ui| {
-                ui.label("Physics:");
-                // Avoid marking PhysicsBackend changed every frame.
-                // (GPU path uses backend.is_changed() to detect actual backend switches.)
-                let mut selected_backend = *backend;
-                ui.radio_value(&mut selected_backend, PhysicsBackend::Gpu, "GPU");
-                ui.radio_value(&mut selected_backend, PhysicsBackend::Cpu, "CPU");
-                if selected_backend != *backend {
-                    *backend = selected_backend;
+                ui.vertical(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!("Time: {:.1}s", sim_state.elapsed))
+                            .color(egui::Color32::WHITE)
+                            .strong(),
+                    );
+                    let dt = time.delta_secs();
+                    if dt > 0.0 {
+                        let fps = 1.0 / dt;
+                        let sim_steps = fps * constants.settings.substeps_per_frame as f32;
+                        ui.label(
+                            egui::RichText::new(format!("{fps:.0} FPS  |  {sim_steps:.0} steps/s"))
+                                .color(egui::Color32::from_gray(190)),
+                        );
+                    } else {
+                        ui.label(
+                            egui::RichText::new("FPS: --  |  steps/s: --")
+                                .color(egui::Color32::from_gray(160)),
+                        );
+                    }
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let (mode_label, mode_color) = match *backend {
+                        PhysicsBackend::Gpu => ("GPU Mode", COLOR_GPU),
+                        PhysicsBackend::Cpu => ("CPU Mode", COLOR_CPU),
+                    };
+                    status_chip(ui, mode_label, mode_color);
+                });
+            });
+
+            full_width_section(ui, |ui| {
+                ui.label(
+                    egui::RichText::new("Physics Backend")
+                        .color(COLOR_ACCENT)
+                        .strong(),
+                );
+                ui.add_space(2.0);
+                ui.horizontal(|ui| {
+                    ui.label("Physics:");
+                    // Avoid marking PhysicsBackend changed every frame.
+                    // (GPU path uses backend.is_changed() to detect actual backend switches.)
+                    let mut selected_backend = *backend;
+                    ui.radio_value(
+                        &mut selected_backend,
+                        PhysicsBackend::Gpu,
+                        egui::RichText::new("GPU").color(COLOR_GPU),
+                    );
+                    ui.radio_value(
+                        &mut selected_backend,
+                        PhysicsBackend::Cpu,
+                        egui::RichText::new("CPU").color(COLOR_CPU),
+                    );
+                    if selected_backend != *backend {
+                        *backend = selected_backend;
+                    }
+                });
+            });
+
+            full_width_section(ui, |ui| {
+                ui.label(
+                    egui::RichText::new("Oscillation")
+                        .color(COLOR_ACCENT)
+                        .strong(),
+                );
+                ui.add_space(2.0);
+                ui.checkbox(&mut constants.oscillation.enabled, "Enabled");
+                ui.add(
+                    egui::Slider::new(&mut constants.oscillation.amplitude, 0.001..=0.1)
+                        .text("Amplitude [m]")
+                        .step_by(0.001)
+                        .fixed_decimals(3),
+                );
+                ui.add(
+                    egui::Slider::new(&mut constants.oscillation.frequency, 1.0..=20.0)
+                        .text("Frequency [Hz]")
+                        .step_by(1.0)
+                        .fixed_decimals(1),
+                );
+            });
+
+            full_width_section(ui, |ui| {
+                ui.label(egui::RichText::new("Controls").color(COLOR_ACCENT).strong());
+                let pause_label = if sim_state.paused { "Resume" } else { "Pause" };
+                if ui
+                    .add_sized(
+                        [ui.available_width(), 28.0],
+                        egui::Button::new(egui::RichText::new(pause_label).strong())
+                            .fill(egui::Color32::from_rgb(62, 86, 145)),
+                    )
+                    .clicked()
+                {
+                    sim_state.paused = !sim_state.paused;
+                }
+
+                if ui
+                    .add_sized(
+                        [ui.available_width(), 28.0],
+                        egui::Button::new(egui::RichText::new("Reset").strong()).fill(COLOR_RESET),
+                    )
+                    .clicked()
+                {
+                    sim_state.reset_requested = true;
+                    history.clear();
                 }
             });
 
             ui.separator();
-
-            ui.add(
-                egui::Slider::new(&mut constants.oscillation.amplitude, 0.001..=0.1)
-                    .text("Amplitude [m]")
-                    .step_by(0.001)
-                    .fixed_decimals(3),
+            ui.small(
+                egui::RichText::new("WASD: move, Mouse: look").color(egui::Color32::from_gray(165)),
             );
-
-            ui.add(
-                egui::Slider::new(&mut constants.oscillation.frequency, 1.0..=20.0)
-                    .text("Frequency [Hz]")
-                    .step_by(1.0)
-                    .fixed_decimals(1),
-            );
-
-            ui.separator();
-
-            let pause_label = if sim_state.paused { "Resume" } else { "Pause" };
-            if ui.button(pause_label).clicked() {
-                sim_state.paused = !sim_state.paused;
-            }
-
-            if ui.button("Reset").clicked() {
-                sim_state.reset_requested = true;
-                history.clear();
-            }
-
-            ui.separator();
-            ui.label("WASD: move, Mouse: look");
         });
 
     Ok(())
@@ -126,82 +238,104 @@ fn draw_distribution_panel_egui(
     let large_ratio = current.left_large_ratio() as f32;
     let small_ratio = current.left_small_ratio() as f32;
 
-    egui::Window::new("Particle Distribution")
+    egui::Window::new(egui::RichText::new("Particle Distribution").strong())
         .anchor(egui::Align2::LEFT_TOP, egui::vec2(10.0, 10.0))
-        .default_width(420.0)
+        .default_width(DISTRIBUTION_WINDOW_WIDTH)
+        .collapsible(false)
         .resizable(false)
+        .frame(egui::Frame {
+            fill: COLOR_PANEL_BG,
+            stroke: egui::Stroke::new(1.0, COLOR_PANEL_BORDER),
+            corner_radius: egui::CornerRadius::same(10),
+            inner_margin: egui::Margin::same(12),
+            ..Default::default()
+        })
         .show(ctx, |ui| {
-            ui.label(format!(
-                "Large: L {} / R {} ({:.1}%)",
-                current.left_large,
-                current.right_large,
-                large_ratio * 100.0
-            ));
-            ui.add(
-                egui::ProgressBar::new(large_ratio)
-                    .fill(egui::Color32::from_rgb(204, 77, 77))
-                    .show_percentage(),
-            );
+            ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
 
-            ui.label(format!(
-                "Small: L {} / R {} ({:.1}%)",
-                current.left_small,
-                current.right_small,
-                small_ratio * 100.0
-            ));
-            ui.add(
-                egui::ProgressBar::new(small_ratio)
-                    .fill(egui::Color32::from_rgb(77, 77, 204))
-                    .show_percentage(),
-            );
+            full_width_section(ui, |ui| {
+                ui.label(
+                    egui::RichText::new("Current Distribution")
+                        .color(COLOR_ACCENT)
+                        .strong(),
+                );
+                ui.label(format!(
+                    "Large: L {} / R {} ({:.1}%)",
+                    current.left_large,
+                    current.right_large,
+                    large_ratio * 100.0
+                ));
+                ui.add(
+                    egui::ProgressBar::new(large_ratio)
+                        .fill(egui::Color32::from_rgb(204, 77, 77))
+                        .show_percentage(),
+                );
 
-            ui.separator();
-            ui.label(format!(
-                "Total: large={}, small={}",
-                large_total, small_total
-            ));
-            ui.label("History (Left ratio over time)");
+                ui.label(format!(
+                    "Small: L {} / R {} ({:.1}%)",
+                    current.left_small,
+                    current.right_small,
+                    small_ratio * 100.0
+                ));
+                ui.add(
+                    egui::ProgressBar::new(small_ratio)
+                        .fill(egui::Color32::from_rgb(77, 77, 204))
+                        .show_percentage(),
+                );
+                ui.small(
+                    egui::RichText::new(format!("Total: large={large_total}, small={small_total}"))
+                        .color(egui::Color32::from_gray(175)),
+                );
+            });
 
-            let start_idx = history.timestamps.len().saturating_sub(MAX_GRAPH_POINTS);
-            let large_points: Vec<[f64; 2]> = history
-                .timestamps
-                .iter()
-                .zip(history.left_large_ratio.iter())
-                .skip(start_idx)
-                .map(|(t, r)| [*t, *r])
-                .collect();
-            let small_points: Vec<[f64; 2]> = history
-                .timestamps
-                .iter()
-                .zip(history.left_small_ratio.iter())
-                .skip(start_idx)
-                .map(|(t, r)| [*t, *r])
-                .collect();
+            full_width_section(ui, |ui| {
+                ui.label(
+                    egui::RichText::new("History (Left ratio over time)")
+                        .color(COLOR_ACCENT)
+                        .strong(),
+                );
 
-            Plot::new("distribution_history_plot")
-                .height(150.0)
-                .legend(Legend::default())
-                .allow_zoom(false)
-                .allow_drag(false)
-                .allow_scroll(false)
-                .include_y(0.0)
-                .include_y(1.0)
-                .show(ui, |plot_ui| {
-                    plot_ui.hline(HLine::new("50%", 0.5).color(egui::Color32::GRAY));
+                let start_idx = history.timestamps.len().saturating_sub(MAX_GRAPH_POINTS);
+                let large_points: Vec<[f64; 2]> = history
+                    .timestamps
+                    .iter()
+                    .zip(history.left_large_ratio.iter())
+                    .skip(start_idx)
+                    .map(|(t, r)| [*t, *r])
+                    .collect();
+                let small_points: Vec<[f64; 2]> = history
+                    .timestamps
+                    .iter()
+                    .zip(history.left_small_ratio.iter())
+                    .skip(start_idx)
+                    .map(|(t, r)| [*t, *r])
+                    .collect();
 
-                    if !large_points.is_empty() {
-                        plot_ui.line(
-                            Line::new("Large", large_points)
-                                .color(egui::Color32::from_rgb(230, 102, 102)),
-                        );
-                    }
-                    if !small_points.is_empty() {
-                        plot_ui.line(
-                            Line::new("Small", small_points)
-                                .color(egui::Color32::from_rgb(102, 102, 230)),
-                        );
-                    }
-                });
+                Plot::new("distribution_history_plot")
+                    .height(150.0)
+                    .legend(Legend::default())
+                    .allow_zoom(false)
+                    .allow_drag(false)
+                    .allow_scroll(false)
+                    .include_y(0.0)
+                    .include_y(1.0)
+                    .show(ui, |plot_ui| {
+                        plot_ui.hline(HLine::new("50%", 0.5).color(egui::Color32::GRAY));
+
+                        if !large_points.is_empty() {
+                            plot_ui.line(
+                                Line::new("Large", large_points)
+                                    .color(egui::Color32::from_rgb(230, 102, 102)),
+                            );
+                        }
+                        if !small_points.is_empty() {
+                            plot_ui.line(
+                                Line::new("Small", small_points)
+                                    .color(egui::Color32::from_rgb(102, 102, 230)),
+                            );
+                        }
+                    });
+            });
         });
 
     Ok(())
