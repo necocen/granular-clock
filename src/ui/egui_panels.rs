@@ -1,9 +1,9 @@
-use bevy::camera_controller::free_camera::FreeCameraState;
 use bevy::prelude::*;
 use bevy_egui::{
     egui, input::EguiWantsInput, EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPostUpdateSet,
     EguiPrimaryContextPass,
 };
+use bevy_panorbit_camera::PanOrbitCamera;
 use egui_plot::{HLine, Legend, Line, Plot};
 
 use crate::analysis::{CurrentDistribution, DistributionHistory};
@@ -80,7 +80,7 @@ impl Plugin for UiPlugin {
         .add_systems(Update, apply_reset_request)
         .add_systems(
             PostUpdate,
-            sync_free_camera_input_lock.after(EguiPostUpdateSet::ProcessOutput),
+            sync_orbit_camera_input_lock.after(EguiPostUpdateSet::ProcessOutput),
         );
     }
 }
@@ -219,7 +219,8 @@ fn draw_control_panel_egui(
 
             ui.separator();
             ui.small(
-                egui::RichText::new("WASD: move, Mouse: look").color(egui::Color32::from_gray(165)),
+                egui::RichText::new("LMB: orbit, RMB: pan, Wheel: zoom")
+                    .color(egui::Color32::from_gray(165)),
             );
         });
 
@@ -391,12 +392,12 @@ fn apply_reset_request(
     }
 }
 
-fn sync_free_camera_input_lock(
+fn sync_orbit_camera_input_lock(
     egui_wants_input: Res<EguiWantsInput>,
-    mut camera_states: Query<&mut FreeCameraState, With<MainCamera>>,
+    mut cameras: Query<&mut PanOrbitCamera, With<MainCamera>>,
 ) {
     let enabled = !egui_wants_input.wants_any_input();
-    for mut state in &mut camera_states {
-        state.enabled = enabled;
+    for mut camera in &mut cameras {
+        camera.enabled = enabled;
     }
 }

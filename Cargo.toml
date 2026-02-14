@@ -13,6 +13,7 @@ native = ["bevy/dynamic_linking"]
 [dependencies]
 bevy = { version = "0.18", features = ["free_camera", "experimental_bevy_ui_widgets", "webgpu"] }
 bevy_egui = "0.39.1"
+bevy_panorbit_camera = { version = "0.34.0", features = ["bevy_egui"] }
 bytemuck = { version = "1.21", features = ["derive"] }
 egui_plot = "0.34.0"
 rayon = "1.11"
