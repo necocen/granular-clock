@@ -26,12 +26,7 @@ use simulation::{
     constants::{PhysicsBackend, SimulationConstants},
     state::SimulationState,
 };
-use ui::{
-    handle_amplitude_buttons, handle_control_buttons, handle_frequency_buttons,
-    handle_oscillation_toggle, handle_physics_backend_toggle, handle_reset, setup_bevy_ui_controls,
-    setup_distribution_graph, update_button_colors, update_distribution_display,
-    update_fps_display, update_graph_lines, update_simulation_time_display,
-};
+use ui::UiPlugin;
 
 #[cfg(target_family = "wasm")]
 pub use wasm_bindgen_rayon::init_thread_pool;
@@ -65,6 +60,8 @@ pub fn run() {
         .add_plugins(InstanceCpuWriterPlugin)
         // Shared particle draw path
         .add_plugins(GpuInstancingPlugin)
+        // UI
+        .add_plugins(UiPlugin)
         // リソース
         .insert_resource(SimulationConstants::default())
         .insert_resource(PhysicsBackend::default())
@@ -84,21 +81,7 @@ pub fn run() {
         .add_systems(Update, apply_gpu_results.run_if(is_gpu_backend))
         .add_systems(Update, update_container_transforms)
         .add_systems(Update, update_distribution)
-        .add_systems(Update, handle_reset)
         // デバッグ出力は必要時のみ有効化
         // .add_systems(Update, debug_particles)
-        // bevy_uiベースのコントロールパネル
-        .add_systems(Startup, setup_bevy_ui_controls)
-        .add_systems(Startup, setup_distribution_graph)
-        .add_systems(Update, handle_oscillation_toggle)
-        .add_systems(Update, handle_physics_backend_toggle)
-        .add_systems(Update, handle_amplitude_buttons)
-        .add_systems(Update, handle_frequency_buttons)
-        .add_systems(Update, handle_control_buttons)
-        .add_systems(Update, update_button_colors)
-        .add_systems(Update, update_distribution_display)
-        .add_systems(Update, update_graph_lines)
-        .add_systems(Update, update_simulation_time_display)
-        .add_systems(Update, update_fps_display)
         .run();
 }
