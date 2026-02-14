@@ -58,8 +58,7 @@ fn compute_particle_collisions(
 
     // 各粒子について 27 近傍セルのみ探索し、j > i で重複を防ぐ（順序は従来どおり）
     let pairs: Vec<(usize, usize)> = grid.with_cells(|cell_map| {
-        let mut pairs: Vec<(usize, usize)> = Vec::new();
-        pairs.reserve(n);
+        let mut pairs: Vec<(usize, usize)> = Vec::with_capacity(n);
         for i in 0..n {
             let (cx, cy, cz) = grid.particle_cell(i);
             for &(dx, dy, dz) in SpatialHashGrid::neighbor_offsets() {

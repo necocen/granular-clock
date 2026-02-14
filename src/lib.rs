@@ -5,9 +5,9 @@ mod rendering;
 mod simulation;
 mod ui;
 
-use bevy::prelude::*;
 #[cfg(target_family = "wasm")]
 use bevy::asset::{AssetMetaCheck, AssetPlugin};
+use bevy::prelude::*;
 #[cfg(target_family = "wasm")]
 use wasm_bindgen::prelude::wasm_bindgen;
 

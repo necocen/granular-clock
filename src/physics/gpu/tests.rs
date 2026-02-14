@@ -1808,8 +1808,10 @@ fn create_test_buffers(
         mapped_at_creation: false,
     });
     let sort_params_alignment = device.limits().min_uniform_buffer_offset_alignment.max(1) as u64;
-    let sort_params_stride =
-        align_up(std::mem::size_of::<SortParamsGpu>() as u64, sort_params_alignment) as u32;
+    let sort_params_stride = align_up(
+        std::mem::size_of::<SortParamsGpu>() as u64,
+        sort_params_alignment,
+    ) as u32;
     let sort_params_capacity_passes = bitonic_sort_pass_count(sort_count.max(2));
     let sort_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some(&format!("{label_prefix}_sort_params")),

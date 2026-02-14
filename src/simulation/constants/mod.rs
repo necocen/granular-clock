@@ -18,7 +18,7 @@ pub use time::{PhysicsBackend, SimulationSettings, SimulationTimeParams};
 ///
 /// これを Main World の単一リソースとして管理し、
 /// CPU/GPU/Rendering/UI から参照する。
-#[derive(Resource, Clone)]
+#[derive(Resource, Clone, Default)]
 pub struct SimulationConstants {
     pub config: SimulationConfig,
     pub container: ContainerParams,
@@ -29,20 +29,4 @@ pub struct SimulationConstants {
     pub material: MaterialProperties,
     pub wall: WallProperties,
     pub grid: GridSettings,
-}
-
-impl Default for SimulationConstants {
-    fn default() -> Self {
-        Self {
-            config: SimulationConfig::default(),
-            container: ContainerParams::default(),
-            oscillation: OscillationParams::default(),
-            time: SimulationTimeParams::default(),
-            settings: SimulationSettings::default(),
-            physics: PhysicsConstants::default(),
-            material: MaterialProperties::default(),
-            wall: WallProperties::default(),
-            grid: GridSettings::default(),
-        }
-    }
 }

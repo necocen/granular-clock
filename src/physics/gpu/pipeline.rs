@@ -147,8 +147,10 @@ impl GpuPhysicsPipelines {
                     ty: BufferBindingType::Uniform,
                     has_dynamic_offset: true,
                     min_binding_size: Some(
-                        BufferSize::new(std::mem::size_of::<crate::physics::gpu::buffers::SortParamsGpu>() as u64)
-                            .expect("SortParamsGpu size must be non-zero"),
+                        BufferSize::new(std::mem::size_of::<
+                            crate::physics::gpu::buffers::SortParamsGpu,
+                        >() as u64)
+                        .expect("SortParamsGpu size must be non-zero"),
                     ),
                 },
                 count: None,

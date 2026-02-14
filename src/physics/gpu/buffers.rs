@@ -318,5 +318,4 @@ impl GpuPhysicsBuffers {
     pub fn latest_particles(&self) -> &Buffer {
         &self.particles_a
     }
-
 }
