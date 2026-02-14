@@ -132,6 +132,41 @@ pub struct CellRange {
     pub end: u32,
 }
 
+/// Bitonic sort パラメータ（uniform buffer用、16byte）
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable, Debug, Default)]
+pub struct SortParamsGpu {
+    pub j: u32,
+    pub k: u32,
+    pub n: u32,
+    pub _pad: u32,
+}
+
+fn align_up(value: u64, align: u64) -> u64 {
+    if align <= 1 {
+        value
+    } else {
+        value.div_ceil(align) * align
+    }
+}
+
+fn bitonic_sort_pass_count(n: u32) -> u32 {
+    if n < 2 {
+        return 0;
+    }
+    let mut passes = 0u32;
+    let mut k = 2u32;
+    while k <= n {
+        let mut j = k / 2;
+        while j > 0 {
+            passes += 1;
+            j /= 2;
+        }
+        k *= 2;
+    }
+    passes
+}
+
 /// GPU バッファリソース
 #[derive(Resource)]
 pub struct GpuPhysicsBuffers {
@@ -151,6 +186,12 @@ pub struct GpuPhysicsBuffers {
     pub torques: Buffer,
     /// シミュレーションパラメータ
     pub params: Buffer,
+    /// Bitonic sort パラメータ
+    pub sort_params: Buffer,
+    /// sort_params の動的オフセット間隔（bytes）
+    pub sort_params_stride: u32,
+    /// sort_params に格納可能な最大パス数
+    pub sort_params_capacity_passes: u32,
     /// 粒子数
     pub num_particles: u32,
     /// バッファ容量（粒子スロット数）
@@ -221,6 +262,20 @@ impl GpuPhysicsBuffers {
             mapped_at_creation: false,
         });
 
+        let sort_params_size = std::mem::size_of::<SortParamsGpu>() as u64;
+        let sort_params_alignment = render_device
+            .limits()
+            .min_uniform_buffer_offset_alignment
+            .max(1) as u64;
+        let sort_params_stride = align_up(sort_params_size, sort_params_alignment) as u32;
+        let sort_params_capacity_passes = bitonic_sort_pass_count(num_particles.max(2));
+        let sort_params = render_device.create_buffer(&BufferDescriptor {
+            label: Some("bitonic_sort_params"),
+            size: sort_params_stride as u64 * sort_params_capacity_passes.max(1) as u64,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         Self {
             particles_a,
             particles_b,
@@ -230,6 +285,9 @@ impl GpuPhysicsBuffers {
             forces,
             torques,
             params,
+            sort_params,
+            sort_params_stride,
+            sort_params_capacity_passes,
             num_particles,
             capacity: num_particles,
             last_uploaded_generation: 0,
@@ -260,4 +318,5 @@ impl GpuPhysicsBuffers {
     pub fn latest_particles(&self) -> &Buffer {
         &self.particles_a
     }
+
 }

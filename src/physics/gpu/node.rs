@@ -7,9 +7,10 @@ use bevy::{
         renderer::{RenderContext, RenderDevice, RenderQueue},
     },
 };
+use std::num::NonZeroU64;
 
 use super::{
-    buffers::GpuPhysicsBuffers,
+    buffers::{GpuPhysicsBuffers, SortParamsGpu},
     pipeline::GpuPhysicsPipelines,
     plugin::{ExtractedContainerParams, GpuParticleData},
 };
@@ -27,6 +28,7 @@ struct GpuPhysicsBindGroups {
     params: BindGroup,
     particles: [BindGroup; 2],
     spatial: BindGroup,
+    sort_params: BindGroup,
     contact: BindGroup,
 }
 
@@ -72,6 +74,8 @@ impl Node for GpuPhysicsNode {
             pipeline_cache.get_bind_group_layout(&pipelines.particles_bind_group_layout_desc);
         let spatial_layout =
             pipeline_cache.get_bind_group_layout(&pipelines.spatial_bind_group_layout_desc);
+        let sort_params_layout =
+            pipeline_cache.get_bind_group_layout(&pipelines.sort_params_bind_group_layout_desc);
         let contact_layout =
             pipeline_cache.get_bind_group_layout(&pipelines.contact_bind_group_layout_desc);
 
@@ -111,6 +115,19 @@ impl Node for GpuPhysicsNode {
             )),
         );
 
+        let sort_params = render_device.create_bind_group(
+            Some("gpu_physics_sort_params_bind_group"),
+            &sort_params_layout,
+            &BindGroupEntries::single(BufferBinding {
+                buffer: &buffers.sort_params,
+                offset: 0,
+                size: Some(
+                    NonZeroU64::new(std::mem::size_of::<SortParamsGpu>() as u64)
+                        .expect("SortParamsGpu size must be non-zero"),
+                ),
+            }),
+        );
+
         // Contact (forces / torques)
         let contact = render_device.create_bind_group(
             Some("gpu_physics_contact_bind_group"),
@@ -125,6 +142,7 @@ impl Node for GpuPhysicsNode {
             params,
             particles: [particles_forward, particles_reverse],
             spatial,
+            sort_params,
             contact,
         });
     }
@@ -221,24 +239,47 @@ impl Node for GpuPhysicsNode {
 
                 // Pass 2: Bitonic Sort
                 {
+                    let mut stages = Vec::new();
                     let mut k = 2u32;
                     while k <= sort_count {
                         let mut j = k / 2;
                         while j > 0 {
-                            let push_constants = [j, k, sort_count];
-                            let push_constant_bytes = bytemuck::bytes_of(&push_constants);
+                            stages.push(SortParamsGpu {
+                                j,
+                                k,
+                                n: sort_count,
+                                _pad: 0,
+                            });
+                            j /= 2;
+                        }
+                        k *= 2;
+                    }
 
+                    if stages.is_empty() {
+                        // 1粒子など、ソート不要ケース
+                    } else if stages.len() as u32 > buffers.sort_params_capacity_passes {
+                        return;
+                    } else {
+                        let stride = buffers.sort_params_stride as usize;
+                        let mut packed = vec![0u8; stages.len() * stride];
+                        for (idx, params) in stages.iter().enumerate() {
+                            let start = idx * stride;
+                            let end = start + std::mem::size_of::<SortParamsGpu>();
+                            packed[start..end].copy_from_slice(bytemuck::bytes_of(params));
+                        }
+                        render_queue.write_buffer(&buffers.sort_params, 0, &packed);
+
+                        for stage_idx in 0..stages.len() {
+                            let dynamic_offset = stage_idx as u32 * buffers.sort_params_stride;
                             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
                                 label: Some("bitonic_sort_pass"),
                                 timestamp_writes: None,
                             });
                             pass.set_pipeline(bitonic_sort_pipeline);
                             pass.set_bind_group(0, &bind_groups.spatial, &[]);
-                            pass.set_push_constants(0, push_constant_bytes);
+                            pass.set_bind_group(1, &bind_groups.sort_params, &[dynamic_offset]);
                             pass.dispatch_workgroups(workgroups_sort_256, 1, 1);
-                            j /= 2;
                         }
-                        k *= 2;
                     }
                 }
 

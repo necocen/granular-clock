@@ -9,6 +9,8 @@ pub struct GpuPhysicsPipelines {
     pub particles_bind_group_layout_desc: BindGroupLayoutDescriptor,
     /// 空間探索（keys / ids / cell_ranges）のバインドグループレイアウト
     pub spatial_bind_group_layout_desc: BindGroupLayoutDescriptor,
+    /// Bitonic sort パラメータ（uniform）のバインドグループレイアウト
+    pub sort_params_bind_group_layout_desc: BindGroupLayoutDescriptor,
     /// 接触力・トルク（forces / torques）のバインドグループレイアウト
     pub contact_bind_group_layout_desc: BindGroupLayoutDescriptor,
     /// ハッシュキー生成パイプライン
@@ -135,6 +137,24 @@ impl GpuPhysicsPipelines {
             ],
         );
 
+        // Group 4: bitonic sort params
+        let sort_params_bind_group_layout_desc = BindGroupLayoutDescriptor::new(
+            "gpu_physics_sort_params_bind_group_layout",
+            &[BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Uniform,
+                    has_dynamic_offset: true,
+                    min_binding_size: Some(
+                        BufferSize::new(std::mem::size_of::<crate::physics::gpu::buffers::SortParamsGpu>() as u64)
+                            .expect("SortParamsGpu size must be non-zero"),
+                    ),
+                },
+                count: None,
+            }],
+        );
+
         // 共有型定義シェーダーをロード（#import 解決に必要）
         let physics_types_shader: Handle<Shader> = asset_server.load("shaders/physics_types.wgsl");
 
@@ -162,14 +182,14 @@ impl GpuPhysicsPipelines {
         let bitonic_sort_pipeline =
             pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
                 label: Some("bitonic_sort_pipeline".into()),
-                layout: vec![spatial_bind_group_layout_desc.clone()],
+                layout: vec![
+                    spatial_bind_group_layout_desc.clone(),
+                    sort_params_bind_group_layout_desc.clone(),
+                ],
                 shader: bitonic_sort_shader,
                 shader_defs: vec![],
                 entry_point: Some("bitonic_sort_step".into()),
-                push_constant_ranges: vec![PushConstantRange {
-                    stages: ShaderStages::COMPUTE,
-                    range: 0..12,
-                }],
+                push_constant_ranges: vec![],
                 zero_initialize_workgroup_memory: true,
             });
 
@@ -236,6 +256,7 @@ impl GpuPhysicsPipelines {
             params_bind_group_layout_desc,
             particles_bind_group_layout_desc,
             spatial_bind_group_layout_desc,
+            sort_params_bind_group_layout_desc,
             contact_bind_group_layout_desc,
             hash_keys_pipeline,
             bitonic_sort_pipeline,

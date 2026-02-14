@@ -1,8 +1,9 @@
 //! GPU 物理のユニットテスト
 
-use crate::physics::gpu::buffers::{ParticleGpu, SimulationParams};
+use crate::physics::gpu::buffers::{ParticleGpu, SimulationParams, SortParamsGpu};
 use bevy::prelude::Vec3;
 use std::collections::HashMap;
+use std::num::NonZeroU64;
 
 use crate::physics::compute_wall_contact_force as compute_wall_contact_force_core;
 use crate::physics::{
@@ -1236,10 +1237,14 @@ fn run_neighbor_search(
 
 #[cfg(not(target_family = "wasm"))]
 fn run_neighbor_search_with_sort(
+    queue: &wgpu::Queue,
     encoder: &mut wgpu::CommandEncoder,
     params_bind_group: &wgpu::BindGroup,
     particles_bind_group: &wgpu::BindGroup,
     spatial_bind_group: &wgpu::BindGroup,
+    sort_params_bind_group: &wgpu::BindGroup,
+    sort_params_buffer: &wgpu::Buffer,
+    sort_params_stride: u32,
     hash_pipeline: &wgpu::ComputePipeline,
     bitonic_sort_pipeline: &wgpu::ComputePipeline,
     cell_pipeline: &wgpu::ComputePipeline,
@@ -1270,24 +1275,43 @@ fn run_neighbor_search_with_sort(
     }
 
     {
+        let mut stages = Vec::new();
         let mut k = 2u32;
         while k <= sort_count {
             let mut j = k / 2;
             while j > 0 {
-                let push_constants = [j, k, sort_count];
-                let push_constant_bytes = bytemuck::bytes_of(&push_constants);
+                stages.push(SortParamsGpu {
+                    j,
+                    k,
+                    n: sort_count,
+                    _pad: 0,
+                });
+                j /= 2;
+            }
+            k *= 2;
+        }
 
+        if !stages.is_empty() {
+            let stride = sort_params_stride as usize;
+            let mut packed = vec![0u8; stages.len() * stride];
+            for (idx, params) in stages.iter().enumerate() {
+                let start = idx * stride;
+                let end = start + std::mem::size_of::<SortParamsGpu>();
+                packed[start..end].copy_from_slice(bytemuck::bytes_of(params));
+            }
+            queue.write_buffer(sort_params_buffer, 0, &packed);
+
+            for stage_idx in 0..stages.len() {
+                let dynamic_offset = stage_idx as u32 * sort_params_stride;
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("gpu_test_bitonic_sort"),
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(bitonic_sort_pipeline);
                 pass.set_bind_group(0, spatial_bind_group, &[]);
-                pass.set_push_constants(0, push_constant_bytes);
+                pass.set_bind_group(1, sort_params_bind_group, &[dynamic_offset]);
                 pass.dispatch_workgroups(workgroups_sort_256, 1, 1);
-                j /= 2;
             }
-            k *= 2;
         }
     }
 
@@ -1356,6 +1380,7 @@ struct GpuTestPipelines {
     params_bind_group_layout: wgpu::BindGroupLayout,
     particles_bind_group_layout: wgpu::BindGroupLayout,
     spatial_bind_group_layout: wgpu::BindGroupLayout,
+    sort_params_bind_group_layout: wgpu::BindGroupLayout,
     contact_bind_group_layout: wgpu::BindGroupLayout,
 }
 
@@ -1368,16 +1393,46 @@ struct GpuTestBuffers {
     keys: wgpu::Buffer,
     particle_ids: wgpu::Buffer,
     cell_ranges: wgpu::Buffer,
+    sort_params_buffer: wgpu::Buffer,
+    sort_params_stride: u32,
     forces: wgpu::Buffer,
     torques: wgpu::Buffer,
     params_bind_group: wgpu::BindGroup,
     particles_bind_group_forward: wgpu::BindGroup,
     particles_bind_group_reverse: wgpu::BindGroup,
     spatial_bind_group: wgpu::BindGroup,
+    sort_params_bind_group: wgpu::BindGroup,
     contact_bind_group: wgpu::BindGroup,
     num_particles: u32,
     sort_count: u32,
     particle_bytes_len: u64,
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn align_up(value: u64, align: u64) -> u64 {
+    if align <= 1 {
+        value
+    } else {
+        value.div_ceil(align) * align
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn bitonic_sort_pass_count(n: u32) -> u32 {
+    if n < 2 {
+        return 0;
+    }
+    let mut passes = 0u32;
+    let mut k = 2u32;
+    while k <= n {
+        let mut j = k / 2;
+        while j > 0 {
+            passes += 1;
+            j /= 2;
+        }
+        k *= 2;
+    }
+    passes
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -1507,6 +1562,29 @@ fn create_test_contact_bind_group_layout(
 }
 
 #[cfg(not(target_family = "wasm"))]
+fn create_test_sort_params_bind_group_layout(
+    device: &wgpu::Device,
+    label: &'static str,
+) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some(label),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: true,
+                min_binding_size: Some(
+                    wgpu::BufferSize::new(std::mem::size_of::<SortParamsGpu>() as u64)
+                        .expect("SortParamsGpu size must be non-zero"),
+                ),
+            },
+            count: None,
+        }],
+    })
+}
+
+#[cfg(not(target_family = "wasm"))]
 fn create_test_pipelines(
     device: &wgpu::Device,
     label_prefix: &str,
@@ -1518,6 +1596,8 @@ fn create_test_pipelines(
         create_test_particles_bind_group_layout(device, "gpu_test_particles_layout");
     let spatial_bind_group_layout =
         create_test_spatial_bind_group_layout(device, "gpu_test_spatial_layout");
+    let sort_params_bind_group_layout =
+        create_test_sort_params_bind_group_layout(device, "gpu_test_sort_params_layout");
     let contact_bind_group_layout =
         create_test_contact_bind_group_layout(device, "gpu_test_contact_layout");
 
@@ -1594,11 +1674,8 @@ fn create_test_pipelines(
         let bitonic_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some(&format!("{label_prefix}_bitonic_pipeline_layout")),
-                bind_group_layouts: &[&spatial_bind_group_layout],
-                push_constant_ranges: &[wgpu::PushConstantRange {
-                    stages: wgpu::ShaderStages::COMPUTE,
-                    range: 0..12,
-                }],
+                bind_group_layouts: &[&spatial_bind_group_layout, &sort_params_bind_group_layout],
+                push_constant_ranges: &[],
             });
         let bitonic_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some(&format!("{label_prefix}_bitonic_sort")),
@@ -1664,6 +1741,7 @@ fn create_test_pipelines(
         params_bind_group_layout,
         particles_bind_group_layout,
         spatial_bind_group_layout,
+        sort_params_bind_group_layout,
         contact_bind_group_layout,
     }
 }
@@ -1727,6 +1805,16 @@ fn create_test_buffers(
         size: std::mem::size_of::<crate::physics::gpu::buffers::CellRange>() as u64
             * num_cells as u64,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let sort_params_alignment = device.limits().min_uniform_buffer_offset_alignment.max(1) as u64;
+    let sort_params_stride =
+        align_up(std::mem::size_of::<SortParamsGpu>() as u64, sort_params_alignment) as u32;
+    let sort_params_capacity_passes = bitonic_sort_pass_count(sort_count.max(2));
+    let sort_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(&format!("{label_prefix}_sort_params")),
+        size: sort_params_stride as u64 * sort_params_capacity_passes.max(1) as u64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
     let forces = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1798,6 +1886,21 @@ fn create_test_buffers(
             },
         ],
     });
+    let sort_params_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some(&format!("{label_prefix}_sort_params_bind_group")),
+        layout: &pipelines.sort_params_bind_group_layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                buffer: &sort_params_buffer,
+                offset: 0,
+                size: Some(
+                    NonZeroU64::new(std::mem::size_of::<SortParamsGpu>() as u64)
+                        .expect("SortParamsGpu size must be non-zero"),
+                ),
+            }),
+        }],
+    });
 
     let contact_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some(&format!("{label_prefix}_contact_bind_group")),
@@ -1821,12 +1924,15 @@ fn create_test_buffers(
         keys,
         particle_ids,
         cell_ranges,
+        sort_params_buffer,
+        sort_params_stride,
         forces,
         torques,
         params_bind_group,
         particles_bind_group_forward,
         particles_bind_group_reverse,
         spatial_bind_group,
+        sort_params_bind_group,
         contact_bind_group,
         num_particles,
         sort_count,
@@ -1836,6 +1942,7 @@ fn create_test_buffers(
 
 #[cfg(not(target_family = "wasm"))]
 fn run_half_step(
+    queue: &wgpu::Queue,
     encoder: &mut wgpu::CommandEncoder,
     particles_bind_group: &wgpu::BindGroup,
     pipelines: &GpuTestPipelines,
@@ -1845,10 +1952,14 @@ fn run_half_step(
 ) {
     if with_sort {
         run_neighbor_search_with_sort(
+            queue,
             encoder,
             &buffers.params_bind_group,
             particles_bind_group,
             &buffers.spatial_bind_group,
+            &buffers.sort_params_bind_group,
+            &buffers.sort_params_buffer,
+            buffers.sort_params_stride,
             &pipelines.hash_pipeline,
             pipelines
                 .bitonic_sort_pipeline
@@ -1896,12 +2007,14 @@ fn run_half_step(
 
 #[cfg(not(target_family = "wasm"))]
 fn run_substep_vv(
+    queue: &wgpu::Queue,
     encoder: &mut wgpu::CommandEncoder,
     pipelines: &GpuTestPipelines,
     buffers: &GpuTestBuffers,
     with_sort: bool,
 ) {
     run_half_step(
+        queue,
         encoder,
         &buffers.particles_bind_group_forward,
         pipelines,
@@ -1910,6 +2023,7 @@ fn run_substep_vv(
         with_sort,
     );
     run_half_step(
+        queue,
         encoder,
         &buffers.particles_bind_group_reverse,
         pipelines,
@@ -2068,7 +2182,7 @@ fn test_gpu_e2e_matches_cpu_single_particle() {
         for _ in 0..substeps {
             // CPU と同じ順序:
             // 近傍探索 -> 衝突 -> 積分前半 -> 再探索 -> 衝突 -> 積分後半
-            run_substep_vv(&mut encoder, &pipelines, &buffers, false);
+            run_substep_vv(&queue, &mut encoder, &pipelines, &buffers, false);
         }
 
         let readback =
@@ -2183,30 +2297,7 @@ fn test_gpu_e2e_matches_cpu_dense_contacts() {
             }
         };
 
-        if !adapter.features().contains(wgpu::Features::PUSH_CONSTANTS) {
-            if strict_gpu {
-                panic!("Adapter does not support PUSH_CONSTANTS required by bitonic sort test");
-            }
-            eprintln!("Skipping GPU E2E dense test (PUSH_CONSTANTS unsupported)");
-            return;
-        }
-        if adapter.limits().max_push_constant_size < 12 {
-            if strict_gpu {
-                panic!(
-                    "Adapter max_push_constant_size={} is too small for bitonic sort",
-                    adapter.limits().max_push_constant_size
-                );
-            }
-            eprintln!(
-                "Skipping GPU E2E dense test (insufficient push constants: {})",
-                adapter.limits().max_push_constant_size
-            );
-            return;
-        }
-
-        let mut device_desc = wgpu::DeviceDescriptor::default();
-        device_desc.required_features = wgpu::Features::PUSH_CONSTANTS;
-        device_desc.required_limits.max_push_constant_size = 12;
+        let device_desc = wgpu::DeviceDescriptor::default();
 
         let (device, queue) = match adapter.request_device(&device_desc).await {
             Ok(pair) => pair,
@@ -2348,7 +2439,7 @@ fn test_gpu_e2e_matches_cpu_dense_contacts() {
         for _ in 0..substeps {
             // CPU と同じ順序:
             // 近傍探索 -> 衝突 -> 積分前半 -> 再探索 -> 衝突 -> 積分後半
-            run_substep_vv(&mut encoder, &pipelines, &buffers, true);
+            run_substep_vv(&queue, &mut encoder, &pipelines, &buffers, true);
         }
 
         let readback =
@@ -2508,30 +2599,7 @@ fn test_gpu_e2e_matches_cpu_compact_vibrating_box() {
             }
         };
 
-        if !adapter.features().contains(wgpu::Features::PUSH_CONSTANTS) {
-            if strict_gpu {
-                panic!("Adapter does not support PUSH_CONSTANTS required by bitonic sort test");
-            }
-            eprintln!("Skipping compact vibrating E2E test (PUSH_CONSTANTS unsupported)");
-            return;
-        }
-        if adapter.limits().max_push_constant_size < 12 {
-            if strict_gpu {
-                panic!(
-                    "Adapter max_push_constant_size={} is too small for bitonic sort",
-                    adapter.limits().max_push_constant_size
-                );
-            }
-            eprintln!(
-                "Skipping compact vibrating E2E test (insufficient push constants: {})",
-                adapter.limits().max_push_constant_size
-            );
-            return;
-        }
-
-        let mut device_desc = wgpu::DeviceDescriptor::default();
-        device_desc.required_features = wgpu::Features::PUSH_CONSTANTS;
-        device_desc.required_limits.max_push_constant_size = 12;
+        let device_desc = wgpu::DeviceDescriptor::default();
 
         let (device, queue) = match adapter.request_device(&device_desc).await {
             Ok(pair) => pair,
@@ -2669,7 +2737,7 @@ fn test_gpu_e2e_matches_cpu_compact_vibrating_box() {
             });
             // CPU と同じ順序:
             // 近傍探索 -> 衝突 -> 積分前半 -> 再探索 -> 衝突 -> 積分後半
-            run_substep_vv(&mut encoder, &pipelines, &buffers, true);
+            run_substep_vv(&queue, &mut encoder, &pipelines, &buffers, true);
             queue.submit([encoder.finish()]);
         }
 

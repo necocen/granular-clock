@@ -7,12 +7,12 @@ struct SortParams {
     j: u32,
     k: u32,
     n: u32,
+    _pad: u32,
 }
 
 @group(0) @binding(0) var<storage, read_write> keys: array<u32>;
 @group(0) @binding(1) var<storage, read_write> particle_ids: array<u32>;
-
-var<push_constant> sort_params: SortParams;
+@group(1) @binding(0) var<uniform> sort_params: SortParams;
 
 @compute @workgroup_size(256)
 fn bitonic_sort_step(@builtin(global_invocation_id) gid: vec3<u32>) {

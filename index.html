@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Granular Clock</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #1a1a2e;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-family: Arial, sans-serif;
+            font-size: 24px;
+            text-align: center;
+        }
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div id="loading">
+        <div class="spinner"></div>
+        <p>Loading Granular Clock...</p>
+        <p style="font-size: 14px; color: #888;">WebGPU required</p>
+    </div>
+    <link
+        data-trunk
+        rel="rust"
+        data-target-name="granular_clock"
+        data-bindgen-target="web"
+        data-wasm-opt="z"
+        data-no-default-features
+    />
+    <link data-trunk rel="copy-dir" href="assets" />
+    <script>
+        function showLoadingError(message) {
+            document.getElementById("loading").innerHTML = `
+                <p style="color: #e74c3c;">${message}</p>
+                <p style="font-size: 14px; color: #888;">Check browser console for details.</p>
+            `;
+        }
+
+        async function startWasmApp(bindings) {
+            const threadCount = Math.max(1, navigator.hardwareConcurrency || 1);
+            await bindings.initThreadPool(threadCount);
+            bindings.run();
+        }
+
+        window.addEventListener("load", function() {
+            if (!navigator.gpu) {
+                document.getElementById("loading").innerHTML = `
+                    <p style="color: #e74c3c;">WebGPU is not supported</p>
+                    <p style="font-size: 14px; color: #888;">Please use Chrome 113+, Firefox 141+, or Safari 26+</p>
+                `;
+                return;
+            }
+
+            const boot = async () => {
+                try {
+                    if (!window.wasmBindings) {
+                        throw new Error("wasm bindings are not available");
+                    }
+                    await startWasmApp(window.wasmBindings);
+                } catch (error) {
+                    console.error("Failed to bootstrap wasm + rayon thread pool:", error);
+                    showLoadingError("Failed to initialize WebAssembly app");
+                }
+            };
+
+            if (window.wasmBindings) {
+                boot();
+                return;
+            }
+
+            window.addEventListener("TrunkApplicationStarted", boot, { once: true });
+        });
+    </script>
+</body>
+</html>
