@@ -43,7 +43,7 @@ pub fn run_with_config_path(config_path: Option<PathBuf>) {
     let default_plugins = DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
             title: "Granular Clock".into(),
-            resolution: (1280u32, 720u32).into(),
+            resolution: (1280u32, 960u32).into(),
             ..default()
         }),
         ..default()
