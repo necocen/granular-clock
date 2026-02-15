@@ -1,0 +1,12 @@
+# Cross-origin isolation is required for SharedArrayBuffer / wasm thread pool.
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
+  Cross-Origin-Resource-Policy: same-origin
+  X-Content-Type-Options: nosniff
+
+/*.wasm
+  Content-Type: application/wasm
+
+/assets/shaders/*.wgsl
+    Content-Type: text/wgsl
