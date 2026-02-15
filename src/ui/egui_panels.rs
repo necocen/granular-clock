@@ -373,35 +373,36 @@ fn apply_reset_request(
 
     use rand::Rng;
     let mut rng = rand::rng();
-    let config = &constants.config;
+    let particle = &constants.particle;
     let container = &constants.container;
+    let material = &constants.material;
 
-    let spawn_area_x = container.half_extents.x - config.large_radius;
-    let spawn_area_z = container.half_extents.z - config.large_radius;
+    let spawn_area_x = container.half_extents.x - particle.large_radius;
+    let spawn_area_z = container.half_extents.z - particle.large_radius;
     let base_y = container.base_position.y - container.half_extents.y;
 
-    for _ in 0..config.num_large {
+    for _ in 0..particle.num_large {
         let x = rng.random_range(-spawn_area_x..spawn_area_x);
         let z = rng.random_range(-spawn_area_z..spawn_area_z);
-        let y = base_y + config.large_radius + rng.random_range(0.0..0.2);
+        let y = base_y + particle.large_radius + rng.random_range(0.0..0.2);
 
         store.spawn(
             Vec3::new(x, y, z),
-            config.large_radius,
-            config.density,
+            particle.large_radius,
+            material.density,
             ParticleSize::Large,
         );
     }
 
-    for _ in 0..config.num_small {
+    for _ in 0..particle.num_small {
         let x = rng.random_range(-spawn_area_x..spawn_area_x);
         let z = rng.random_range(-spawn_area_z..spawn_area_z);
-        let y = base_y + config.small_radius + rng.random_range(0.0..0.2);
+        let y = base_y + particle.small_radius + rng.random_range(0.0..0.2);
 
         store.spawn(
             Vec3::new(x, y, z),
-            config.small_radius,
-            config.density,
+            particle.small_radius,
+            material.density,
             ParticleSize::Small,
         );
     }

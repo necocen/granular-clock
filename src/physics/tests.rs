@@ -533,7 +533,7 @@ fn test_multiple_particles_stay_in_container() {
         let y = base_y + config.large_radius + rng.random_range(0.0..0.2);
 
         let volume = (4.0 / 3.0) * PI * config.large_radius.powi(3);
-        let mass = config.density * volume;
+        let mass = material.density * volume;
         let inertia = (2.0 / 5.0) * mass * config.large_radius.powi(2);
 
         particles.push(Particle {
@@ -553,7 +553,7 @@ fn test_multiple_particles_stay_in_container() {
         let y = base_y + config.small_radius + rng.random_range(0.0..0.2);
 
         let volume = (4.0 / 3.0) * PI * config.small_radius.powi(3);
-        let mass = config.density * volume;
+        let mass = material.density * volume;
         let inertia = (2.0 / 5.0) * mass * config.small_radius.powi(2);
 
         particles.push(Particle {

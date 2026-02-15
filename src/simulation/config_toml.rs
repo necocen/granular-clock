@@ -5,9 +5,9 @@ use bevy::prelude::*;
 use serde::Deserialize;
 
 use crate::simulation::constants::{
-    ContainerParams, GridSettings, MaterialProperties, OscillationParams, PhysicsConstants,
-    SimulationConfig, SimulationConstants, SimulationSettings, SimulationTimeParams,
-    UiControlRanges, UiSliderRange, WallProperties,
+    ContainerParams, MaterialProperties, OscillationParams, PhysicsConstants, SimulationConfig,
+    SimulationConstants, SimulationSettings, SimulationTimeParams, UiControlRanges, UiSliderRange,
+    WallProperties,
 };
 
 const EMBEDDED_CONFIG_TOML: &str = include_str!("../../simulation.toml");
@@ -50,58 +50,56 @@ struct RawRoot {
 
 #[derive(Debug, Deserialize)]
 struct RawSimulation {
-    config: RawSimulationConfig,
+    gravity: [f32; 3],
+    particle: RawParticleConfig,
     container: RawContainer,
     oscillation: RawOscillation,
-    time: RawTime,
-    settings: RawSettings,
-    physics: RawPhysics,
-    material: RawMaterial,
-    wall: RawWall,
-    grid: RawGrid,
+    step: RawStep,
 }
 
 #[derive(Debug, Deserialize)]
-struct RawSimulationConfig {
+struct RawParticleConfig {
     large_radius: f32,
     small_radius: f32,
-    density: f32,
     num_large: u32,
     num_small: u32,
+    material: RawParticleMaterial,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 struct RawContainer {
-    half_extents: [f32; 3],
-    divider_height: f32,
-    divider_thickness: f32,
-    base_position: [f32; 3],
+    r#box: RawContainerBox,
+    divider: RawContainerDivider,
+    material: RawContainerMaterial,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct RawContainerBox {
+    size: [f32; 3],
+    center: [f32; 3],
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct RawContainerDivider {
+    height: f32,
+    thickness: f32,
 }
 
 #[derive(Debug, Deserialize)]
 struct RawOscillation {
     amplitude: f32,
     frequency: f32,
-    enabled: bool,
 }
 
 #[derive(Debug, Deserialize)]
-struct RawTime {
+struct RawStep {
     dt: f32,
-}
-
-#[derive(Debug, Deserialize)]
-struct RawSettings {
     substeps_per_frame: u32,
 }
 
 #[derive(Debug, Deserialize)]
-struct RawPhysics {
-    gravity: [f32; 3],
-}
-
-#[derive(Debug, Deserialize)]
-struct RawMaterial {
+struct RawParticleMaterial {
+    density: f32,
     youngs_modulus: f32,
     poisson_ratio: f32,
     restitution: f32,
@@ -109,7 +107,7 @@ struct RawMaterial {
     rolling_friction: f32,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 struct RawWall {
     stiffness: f32,
     damping: f32,
@@ -117,11 +115,7 @@ struct RawWall {
     restitution: f32,
 }
 
-#[derive(Debug, Deserialize)]
-struct RawGrid {
-    cell_size: f32,
-    table_size: usize,
-}
+type RawContainerMaterial = RawWall;
 
 #[derive(Debug, Deserialize)]
 struct RawUi {
@@ -218,224 +212,188 @@ fn convert_raw_config(raw: RawRoot, source_name: &str) -> LoadedConfig {
         oscillation_frequency: frequency_range,
     };
 
-    let mut simulation = SimulationConstants {
-        config: SimulationConfig {
-            large_radius: sanitize_f32(
-                raw.simulation.config.large_radius,
-                defaults.config.large_radius,
-                source_name,
-                "simulation.config.large_radius",
-                &mut warnings,
-                |v| v > 0.0,
-            ),
-            small_radius: sanitize_f32(
-                raw.simulation.config.small_radius,
-                defaults.config.small_radius,
-                source_name,
-                "simulation.config.small_radius",
-                &mut warnings,
-                |v| v > 0.0,
-            ),
-            density: sanitize_f32(
-                raw.simulation.config.density,
-                defaults.config.density,
-                source_name,
-                "simulation.config.density",
-                &mut warnings,
-                |v| v > 0.0,
-            ),
-            num_large: sanitize_u32(
-                raw.simulation.config.num_large,
-                defaults.config.num_large,
-                source_name,
-                "simulation.config.num_large",
-                &mut warnings,
-                |v| v > 0,
-            ),
-            num_small: sanitize_u32(
-                raw.simulation.config.num_small,
-                defaults.config.num_small,
-                source_name,
-                "simulation.config.num_small",
-                &mut warnings,
-                |v| v > 0,
-            ),
-        },
-        container: ContainerParams {
-            half_extents: sanitize_positive_vec3(
-                raw.simulation.container.half_extents,
-                defaults.container.half_extents,
-                source_name,
-                "simulation.container.half_extents",
-                &mut warnings,
-            ),
-            divider_height: sanitize_f32(
-                raw.simulation.container.divider_height,
-                defaults.container.divider_height,
-                source_name,
-                "simulation.container.divider_height",
-                &mut warnings,
-                |v| v > 0.0,
-            ),
-            divider_thickness: sanitize_f32(
-                raw.simulation.container.divider_thickness,
-                defaults.container.divider_thickness,
-                source_name,
-                "simulation.container.divider_thickness",
-                &mut warnings,
-                |v| v > 0.0,
-            ),
-            base_position: sanitize_vec3(
-                raw.simulation.container.base_position,
-                defaults.container.base_position,
-                source_name,
-                "simulation.container.base_position",
-                &mut warnings,
-            ),
-        },
-        oscillation: OscillationParams {
-            amplitude: sanitize_f32(
-                raw.simulation.oscillation.amplitude,
-                defaults.oscillation.amplitude,
-                source_name,
-                "simulation.oscillation.amplitude",
-                &mut warnings,
-                |v| v >= 0.0,
-            ),
-            frequency: sanitize_f32(
-                raw.simulation.oscillation.frequency,
-                defaults.oscillation.frequency,
-                source_name,
-                "simulation.oscillation.frequency",
-                &mut warnings,
-                |v| v > 0.0,
-            ),
-            enabled: raw.simulation.oscillation.enabled,
-        },
-        time: SimulationTimeParams {
-            dt: sanitize_f32(
-                raw.simulation.time.dt,
-                defaults.time.dt,
-                source_name,
-                "simulation.time.dt",
-                &mut warnings,
-                |v| v > 0.0,
-            ),
-        },
-        settings: SimulationSettings {
-            substeps_per_frame: sanitize_u32(
-                raw.simulation.settings.substeps_per_frame,
-                defaults.settings.substeps_per_frame,
-                source_name,
-                "simulation.settings.substeps_per_frame",
-                &mut warnings,
-                |v| v > 0,
-            ),
-        },
-        physics: PhysicsConstants {
-            gravity: sanitize_vec3(
-                raw.simulation.physics.gravity,
-                defaults.physics.gravity,
-                source_name,
-                "simulation.physics.gravity",
-                &mut warnings,
-            ),
-        },
-        material: MaterialProperties {
-            youngs_modulus: sanitize_f32(
-                raw.simulation.material.youngs_modulus,
-                defaults.material.youngs_modulus,
-                source_name,
-                "simulation.material.youngs_modulus",
-                &mut warnings,
-                |v| v > 0.0,
-            ),
-            poisson_ratio: sanitize_f32(
-                raw.simulation.material.poisson_ratio,
-                defaults.material.poisson_ratio,
-                source_name,
-                "simulation.material.poisson_ratio",
-                &mut warnings,
-                |v| (-0.99..0.5).contains(&v),
-            ),
-            restitution: sanitize_f32(
-                raw.simulation.material.restitution,
-                defaults.material.restitution,
-                source_name,
-                "simulation.material.restitution",
-                &mut warnings,
-                |v| (0.0..=1.0).contains(&v),
-            ),
-            friction: sanitize_f32(
-                raw.simulation.material.friction,
-                defaults.material.friction,
-                source_name,
-                "simulation.material.friction",
-                &mut warnings,
-                |v| v >= 0.0,
-            ),
-            rolling_friction: sanitize_f32(
-                raw.simulation.material.rolling_friction,
-                defaults.material.rolling_friction,
-                source_name,
-                "simulation.material.rolling_friction",
-                &mut warnings,
-                |v| v >= 0.0,
-            ),
-        },
-        wall: WallProperties {
-            stiffness: sanitize_f32(
-                raw.simulation.wall.stiffness,
-                defaults.wall.stiffness,
-                source_name,
-                "simulation.wall.stiffness",
-                &mut warnings,
-                |v| v >= 0.0,
-            ),
-            damping: sanitize_f32(
-                raw.simulation.wall.damping,
-                defaults.wall.damping,
-                source_name,
-                "simulation.wall.damping",
-                &mut warnings,
-                |v| v >= 0.0,
-            ),
-            friction: sanitize_f32(
-                raw.simulation.wall.friction,
-                defaults.wall.friction,
-                source_name,
-                "simulation.wall.friction",
-                &mut warnings,
-                |v| v >= 0.0,
-            ),
-            restitution: sanitize_f32(
-                raw.simulation.wall.restitution,
-                defaults.wall.restitution,
-                source_name,
-                "simulation.wall.restitution",
-                &mut warnings,
-                |v| (0.0..=1.0).contains(&v),
-            ),
-        },
-        grid: GridSettings {
-            cell_size: sanitize_f32(
-                raw.simulation.grid.cell_size,
-                defaults.grid.cell_size,
-                source_name,
-                "simulation.grid.cell_size",
-                &mut warnings,
-                |v| v > 0.0,
-            ),
-            table_size: sanitize_usize(
-                raw.simulation.grid.table_size,
-                defaults.grid.table_size,
-                source_name,
-                "simulation.grid.table_size",
-                &mut warnings,
-                |v| v > 0,
-            ),
-        },
+    let particle = SimulationConfig {
+        large_radius: sanitize_f32(
+            raw.simulation.particle.large_radius,
+            defaults.particle.large_radius,
+            source_name,
+            "simulation.particle.large_radius",
+            &mut warnings,
+            |v| v > 0.0,
+        ),
+        small_radius: sanitize_f32(
+            raw.simulation.particle.small_radius,
+            defaults.particle.small_radius,
+            source_name,
+            "simulation.particle.small_radius",
+            &mut warnings,
+            |v| v > 0.0,
+        ),
+        num_large: sanitize_u32(
+            raw.simulation.particle.num_large,
+            defaults.particle.num_large,
+            source_name,
+            "simulation.particle.num_large",
+            &mut warnings,
+            |v| v > 0,
+        ),
+        num_small: sanitize_u32(
+            raw.simulation.particle.num_small,
+            defaults.particle.num_small,
+            source_name,
+            "simulation.particle.num_small",
+            &mut warnings,
+            |v| v > 0,
+        ),
     };
+    let container = resolve_container_params(
+        raw.simulation.container.clone(),
+        defaults.container.clone(),
+        source_name,
+        &mut warnings,
+    );
+    let oscillation = OscillationParams {
+        amplitude: sanitize_f32(
+            raw.simulation.oscillation.amplitude,
+            defaults.oscillation.amplitude,
+            source_name,
+            "simulation.oscillation.amplitude",
+            &mut warnings,
+            |v| v >= 0.0,
+        ),
+        frequency: sanitize_f32(
+            raw.simulation.oscillation.frequency,
+            defaults.oscillation.frequency,
+            source_name,
+            "simulation.oscillation.frequency",
+            &mut warnings,
+            |v| v > 0.0,
+        ),
+        enabled: defaults.oscillation.enabled,
+    };
+    let time = SimulationTimeParams {
+        dt: sanitize_f32(
+            raw.simulation.step.dt,
+            defaults.time.dt,
+            source_name,
+            "simulation.step.dt",
+            &mut warnings,
+            |v| v > 0.0,
+        ),
+    };
+    let settings = SimulationSettings {
+        substeps_per_frame: sanitize_u32(
+            raw.simulation.step.substeps_per_frame,
+            defaults.settings.substeps_per_frame,
+            source_name,
+            "simulation.step.substeps_per_frame",
+            &mut warnings,
+            |v| v > 0,
+        ),
+    };
+    let physics = PhysicsConstants {
+        gravity: sanitize_vec3(
+            raw.simulation.gravity,
+            defaults.physics.gravity,
+            source_name,
+            "simulation.gravity",
+            &mut warnings,
+        ),
+    };
+    let material = MaterialProperties {
+        density: sanitize_f32(
+            raw.simulation.particle.material.density,
+            defaults.material.density,
+            source_name,
+            "simulation.particle.material.density",
+            &mut warnings,
+            |v| v > 0.0,
+        ),
+        youngs_modulus: sanitize_f32(
+            raw.simulation.particle.material.youngs_modulus,
+            defaults.material.youngs_modulus,
+            source_name,
+            "simulation.particle.material.youngs_modulus",
+            &mut warnings,
+            |v| v > 0.0,
+        ),
+        poisson_ratio: sanitize_f32(
+            raw.simulation.particle.material.poisson_ratio,
+            defaults.material.poisson_ratio,
+            source_name,
+            "simulation.particle.material.poisson_ratio",
+            &mut warnings,
+            |v| (-0.99..0.5).contains(&v),
+        ),
+        restitution: sanitize_f32(
+            raw.simulation.particle.material.restitution,
+            defaults.material.restitution,
+            source_name,
+            "simulation.particle.material.restitution",
+            &mut warnings,
+            |v| (0.0..=1.0).contains(&v),
+        ),
+        friction: sanitize_f32(
+            raw.simulation.particle.material.friction,
+            defaults.material.friction,
+            source_name,
+            "simulation.particle.material.friction",
+            &mut warnings,
+            |v| v >= 0.0,
+        ),
+        rolling_friction: sanitize_f32(
+            raw.simulation.particle.material.rolling_friction,
+            defaults.material.rolling_friction,
+            source_name,
+            "simulation.particle.material.rolling_friction",
+            &mut warnings,
+            |v| v >= 0.0,
+        ),
+    };
+    let wall = WallProperties {
+        stiffness: sanitize_f32(
+            raw.simulation.container.material.stiffness,
+            defaults.wall.stiffness,
+            source_name,
+            "simulation.container.material.stiffness",
+            &mut warnings,
+            |v| v >= 0.0,
+        ),
+        damping: sanitize_f32(
+            raw.simulation.container.material.damping,
+            defaults.wall.damping,
+            source_name,
+            "simulation.container.material.damping",
+            &mut warnings,
+            |v| v >= 0.0,
+        ),
+        friction: sanitize_f32(
+            raw.simulation.container.material.friction,
+            defaults.wall.friction,
+            source_name,
+            "simulation.container.material.friction",
+            &mut warnings,
+            |v| v >= 0.0,
+        ),
+        restitution: sanitize_f32(
+            raw.simulation.container.material.restitution,
+            defaults.wall.restitution,
+            source_name,
+            "simulation.container.material.restitution",
+            &mut warnings,
+            |v| (0.0..=1.0).contains(&v),
+        ),
+    };
+
+    let mut simulation = defaults.clone();
+    simulation.set_particle(particle);
+    simulation.set_container(container);
+    simulation.oscillation = oscillation;
+    simulation.time = time;
+    simulation.settings = settings;
+    simulation.physics = physics;
+    simulation.material = material;
+    simulation.wall = wall;
 
     simulation.oscillation.amplitude = clamp_into_range(
         simulation.oscillation.amplitude,
@@ -456,6 +414,52 @@ fn convert_raw_config(raw: RawRoot, source_name: &str) -> LoadedConfig {
         simulation,
         ui_ranges,
         warnings,
+    }
+}
+
+fn resolve_container_params(
+    raw: RawContainer,
+    default: ContainerParams,
+    source_name: &str,
+    warnings: &mut Vec<String>,
+) -> ContainerParams {
+    let full_size = sanitize_positive_vec3(
+        raw.r#box.size,
+        default.half_extents * 2.0,
+        source_name,
+        "simulation.container.box.size",
+        warnings,
+    );
+    let half_extents = full_size * 0.5;
+    let base_position = sanitize_vec3(
+        raw.r#box.center,
+        default.base_position,
+        source_name,
+        "simulation.container.box.center",
+        warnings,
+    );
+    let divider_height = sanitize_f32(
+        raw.divider.height,
+        default.divider_height,
+        source_name,
+        "simulation.container.divider.height",
+        warnings,
+        |v| v > 0.0,
+    );
+    let divider_thickness = sanitize_f32(
+        raw.divider.thickness,
+        default.divider_thickness,
+        source_name,
+        "simulation.container.divider.thickness",
+        warnings,
+        |v| v > 0.0,
+    );
+
+    ContainerParams {
+        half_extents,
+        divider_height,
+        divider_thickness,
+        base_position,
     }
 }
 
@@ -485,24 +489,6 @@ fn sanitize_u32(
     warnings: &mut Vec<String>,
     predicate: impl Fn(u32) -> bool,
 ) -> u32 {
-    if predicate(value) {
-        value
-    } else {
-        warnings.push(format!(
-            "{source_name}: invalid `{key}`={value}, using default {default}"
-        ));
-        default
-    }
-}
-
-fn sanitize_usize(
-    value: usize,
-    default: usize,
-    source_name: &str,
-    key: &str,
-    warnings: &mut Vec<String>,
-    predicate: impl Fn(usize) -> bool,
-) -> usize {
     if predicate(value) {
         value
     } else {
@@ -639,7 +625,7 @@ mod tests {
     #[test]
     fn embedded_config_parses() {
         let loaded = load_embedded_config();
-        assert!(!loaded.simulation.config.large_radius.is_nan());
+        assert!(!loaded.simulation.particle.large_radius.is_nan());
         assert!(loaded.ui_ranges.oscillation_amplitude.min > 0.0);
     }
 
@@ -650,7 +636,7 @@ mod tests {
         std::fs::write(&path, EMBEDDED_CONFIG_TOML).expect("write config");
         let loaded = load_config_from_path(&path).expect("load config");
         std::fs::remove_file(&path).ok();
-        assert_eq!(loaded.simulation.config.num_large, 250);
+        assert_eq!(loaded.simulation.particle.num_large, 250);
     }
 
     #[cfg(not(target_family = "wasm"))]
@@ -658,56 +644,51 @@ mod tests {
     fn resolve_falls_back_to_embedded_when_runtime_missing() {
         let missing = temp_path("missing");
         let loaded = resolve_startup_config(Some(&missing));
-        assert!(loaded.simulation.config.num_small > 0);
+        assert!(loaded.simulation.particle.num_small > 0);
         assert!(!loaded.warnings.is_empty());
     }
 
     #[test]
     fn invalid_values_are_corrected() {
         let invalid = r#"
-[simulation.config]
+[simulation]
+gravity = [0.0, -9.81, 0.0]
+
+[simulation.particle]
 large_radius = -1.0
 small_radius = 0.0
-density = -10.0
 num_large = 0
 num_small = 0
 
-[simulation.container]
-half_extents = [0.2, -1.0, 0.1]
-divider_height = -0.1
-divider_thickness = -0.01
-base_position = [0.0, 0.075, 0.0]
-
-[simulation.oscillation]
-amplitude = 10.0
-frequency = -1.0
-enabled = true
-
-[simulation.time]
-dt = -0.1
-
-[simulation.settings]
-substeps_per_frame = 0
-
-[simulation.physics]
-gravity = [0.0, -9.81, 0.0]
-
-[simulation.material]
+[simulation.particle.material]
+density = -10.0
 youngs_modulus = -1.0
 poisson_ratio = 2.0
 restitution = 2.0
 friction = -1.0
 rolling_friction = -1.0
 
-[simulation.wall]
+[simulation.container.box]
+size = [0.2, -1.0, 0.1]
+center = [0.0, 0.075, 0.0]
+
+[simulation.container.divider]
+height = -0.1
+thickness = -0.01
+
+[simulation.container.material]
 stiffness = -1.0
 damping = -1.0
 friction = -1.0
 restitution = 2.0
 
-[simulation.grid]
-cell_size = 0.0
-table_size = 0
+[simulation.oscillation]
+amplitude = 10.0
+frequency = -1.0
+
+[simulation.step]
+dt = -0.1
+substeps_per_frame = 0
 
 [ui.oscillation.amplitude]
 min = 2.0
@@ -724,10 +705,18 @@ step = 100.0
         let defaults = SimulationConstants::default();
         let ui_defaults = UiControlRanges::default();
         assert_eq!(
-            loaded.simulation.config.large_radius,
-            defaults.config.large_radius
+            loaded.simulation.particle.large_radius,
+            defaults.particle.large_radius
+        );
+        assert_eq!(
+            loaded.simulation.material.density,
+            defaults.material.density
         );
         assert_eq!(loaded.simulation.time.dt, defaults.time.dt);
+        assert_eq!(
+            loaded.simulation.oscillation.enabled,
+            defaults.oscillation.enabled
+        );
         assert_eq!(
             loaded.ui_ranges.oscillation_amplitude.min,
             ui_defaults.oscillation_amplitude.min

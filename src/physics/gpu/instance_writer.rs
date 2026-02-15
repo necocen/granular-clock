@@ -132,8 +132,8 @@ impl Node for GpuInstanceWriteNode {
         let Some(constants) = world.get_resource::<SimulationConstants>() else {
             return;
         };
-        let config = &constants.config;
-        let total = config.num_large + config.num_small;
+        let particle = &constants.particle;
+        let total = particle.num_large + particle.num_small;
         if total == 0 {
             return;
         }
@@ -186,7 +186,7 @@ impl Node for GpuInstanceWriteNode {
         self.workgroups = total.div_ceil(64);
         self.params = InstanceParams {
             num_particles: total,
-            num_large: config.num_large,
+            num_large: particle.num_large,
             _pad: [0; 2],
             large_color: LARGE_PARTICLE_COLOR,
             small_color: SMALL_PARTICLE_COLOR,
@@ -304,8 +304,8 @@ fn prepare_gpu_instance_buffer(
     instance_buffer: Option<ResMut<RenderInstanceBufferResource>>,
     batch_query: Query<Entity, With<ParticleBatchMarker>>,
 ) {
-    let config = &constants.config;
-    let instance_len = config.num_large + config.num_small;
+    let particle = &constants.particle;
+    let instance_len = particle.num_large + particle.num_small;
 
     if instance_len > 0 {
         let required_capacity = normalized_instance_capacity(instance_len);

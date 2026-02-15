@@ -50,9 +50,9 @@ impl Default for UiControlRanges {
 ///
 /// これを Main World の単一リソースとして管理し、
 /// CPU/GPU/Rendering/UI から参照する。
-#[derive(Resource, Clone, Default)]
+#[derive(Resource, Clone)]
 pub struct SimulationConstants {
-    pub config: SimulationConfig,
+    pub particle: SimulationConfig,
     pub container: ContainerParams,
     pub oscillation: OscillationParams,
     pub time: SimulationTimeParams,
@@ -61,4 +61,61 @@ pub struct SimulationConstants {
     pub material: MaterialProperties,
     pub wall: WallProperties,
     pub grid: GridSettings,
+}
+
+impl Default for SimulationConstants {
+    fn default() -> Self {
+        Self::new(
+            SimulationConfig::default(),
+            ContainerParams::default(),
+            OscillationParams::default(),
+            SimulationTimeParams::default(),
+            SimulationSettings::default(),
+            PhysicsConstants::default(),
+            MaterialProperties::default(),
+            WallProperties::default(),
+        )
+    }
+}
+
+impl SimulationConstants {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        particle: SimulationConfig,
+        container: ContainerParams,
+        oscillation: OscillationParams,
+        time: SimulationTimeParams,
+        settings: SimulationSettings,
+        physics: PhysicsConstants,
+        material: MaterialProperties,
+        wall: WallProperties,
+    ) -> Self {
+        let grid = GridSettings::derive_from_scene(&particle, &container);
+
+        Self {
+            particle,
+            container,
+            oscillation,
+            time,
+            settings,
+            physics,
+            material,
+            wall,
+            grid,
+        }
+    }
+
+    pub fn set_particle(&mut self, particle: SimulationConfig) {
+        self.particle = particle;
+        self.refresh_grid_settings();
+    }
+
+    pub fn set_container(&mut self, container: ContainerParams) {
+        self.container = container;
+        self.refresh_grid_settings();
+    }
+
+    pub fn refresh_grid_settings(&mut self) {
+        self.grid = GridSettings::derive_from_scene(&self.particle, &self.container);
+    }
 }

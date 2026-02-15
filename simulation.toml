@@ -1,47 +1,66 @@
-[simulation.config]
+# Global simulation settings shared by CPU/GPU paths.
+[simulation]
+# Gravity acceleration [m/s^2]
+gravity = [0.0, -9.80665, 0.0]
+
+# Particle population and size.
+[simulation.particle]
+# Particle radius [m]
 large_radius = 0.01
 small_radius = 0.006
-density = 5000.0
+# Number of particles by type
 num_large = 250
 num_small = 1500
 
-[simulation.container]
-half_extents = [0.2, 0.25, 0.1]
-divider_height = 0.10
-divider_thickness = 0.02
-base_position = [0.0, 0.075, 0.0]
-
-[simulation.oscillation]
-amplitude = 0.013
-frequency = 20.0
-enabled = true
-
-[simulation.time]
-dt = 0.0004
-
-[simulation.settings]
-substeps_per_frame = 3
-
-[simulation.physics]
-gravity = [0.0, -9.80665, 0.0]
-
-[simulation.material]
+# Particle-particle contact material properties.
+[simulation.particle.material]
+# Density [kg/m^3]
+density = 5000.0
+# Elastic model parameters
 youngs_modulus = 1.0e7
 poisson_ratio = 0.25
+# Collision/friction parameters
 restitution = 0.6
 friction = 0.3
 rolling_friction = 0.1
 
-[simulation.wall]
+# Container box dimensions.
+[simulation.container.box]
+# Full box size [m] (not half extents)
+size = [0.4, 0.5, 0.2]
+# Box center position in world coordinates [m]
+center = [0.0, 0.075, 0.0]
+
+# Divider geometry inside the container.
+[simulation.container.divider]
+# Divider height from container floor [m]
+height = 0.10
+# Divider thickness [m]
+thickness = 0.02
+
+# Particle-wall contact properties.
+[simulation.container.material]
+# Penalty-model wall stiffness/damping
 stiffness = 10000.0
 damping = 20.0
+# Wall friction and restitution
 friction = 0.6
 restitution = 0.5
 
-[simulation.grid]
-cell_size = 0.03
-table_size = 4096
+# Vertical sinusoidal oscillation of the container.
+[simulation.oscillation]
+# Amplitude [m], frequency [Hz]
+amplitude = 0.013
+frequency = 20.0
 
+# Integration step settings.
+[simulation.step]
+# Substep time interval [s]
+dt = 0.0004
+# Number of physics substeps per rendered frame
+substeps_per_frame = 3
+
+# UI slider ranges for runtime oscillation controls.
 [ui.oscillation]
 amplitude = { min = 0.001, max = 0.1, step = 0.001 }
 frequency = { min = 1.0, max = 50.0, step = 1.0 }

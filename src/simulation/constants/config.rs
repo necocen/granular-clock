@@ -7,8 +7,6 @@ pub struct SimulationConfig {
     pub large_radius: f32,
     /// 小粒子の半径
     pub small_radius: f32,
-    /// 粒子密度
-    pub density: f32,
     /// 大粒子の数
     pub num_large: u32,
     /// 小粒子の数
@@ -20,7 +18,6 @@ impl Default for SimulationConfig {
         Self {
             large_radius: 0.01,  // 10 mm
             small_radius: 0.006, // 6 mm
-            density: 5000.0,     // kg/m^3
             num_large: 250,
             num_small: 1500,
         }

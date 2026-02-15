@@ -847,6 +847,7 @@ fn cpu_compute_contact_force(
 #[test]
 fn test_cpu_gpu_contact_force_consistency() {
     let material = crate::simulation::constants::MaterialProperties {
+        density: 5000.0,
         youngs_modulus: 1e6,
         poisson_ratio: 0.25,
         restitution: 0.5,
@@ -1010,6 +1011,7 @@ fn test_cpu_gpu_trajectory_consistency() {
     let mass_inv = 95.493_f32;
 
     let material = crate::simulation::constants::MaterialProperties {
+        density: 5000.0,
         youngs_modulus: 1e6,
         poisson_ratio: 0.25,
         restitution: 0.5,

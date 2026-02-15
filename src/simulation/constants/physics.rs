@@ -1,8 +1,12 @@
 use bevy::prelude::*;
 
+use super::{config::SimulationConfig, container::ContainerParams};
+
 /// 粒子間接触の材料パラメータ（CPU/GPU 共通）
 #[derive(Resource, Clone, Copy)]
 pub struct MaterialProperties {
+    /// 粒子密度 (kg/m^3)
+    pub density: f32,
     /// ヤング率 (Pa)
     pub youngs_modulus: f32,
     /// ポアソン比
@@ -18,6 +22,7 @@ pub struct MaterialProperties {
 impl Default for MaterialProperties {
     fn default() -> Self {
         Self {
+            density: 5000.0,
             youngs_modulus: 1e7, // 10MPa　かため
             poisson_ratio: 0.25,
             restitution: 0.6, // 反発係数（中程度）
@@ -77,14 +82,47 @@ pub struct GridSettings {
 
 impl Default for GridSettings {
     fn default() -> Self {
-        Self {
-            cell_size: 0.03, // 大粒子直径 0.02 より大きい
-            table_size: 4096,
-        }
+        Self::derive_from_scene(&SimulationConfig::default(), &ContainerParams::default())
     }
 }
 
 impl GridSettings {
+    /// 粒子径とコンテナ寸法からグリッド設定を自動導出
+    pub fn derive_from_scene(particle: &SimulationConfig, container: &ContainerParams) -> Self {
+        let max_radius = particle.large_radius.max(particle.small_radius).max(1e-6);
+        let min_cell_size = (2.0 * max_radius * 1.05).max(1e-4);
+
+        let max_extent = container
+            .half_extents
+            .x
+            .max(container.half_extents.y)
+            .max(container.half_extents.z);
+        let world_size = (2.0 * max_extent * 1.5).max(min_cell_size * 8.0);
+
+        // grid_dim 上限(64)を満たすようにセルサイズ下限も加味する
+        let cell_size = min_cell_size.max(world_size / 64.0);
+        let dim = ((world_size / cell_size).ceil() as usize).clamp(8, 64);
+        let approx_cells = dim * dim * dim;
+
+        // CPU側 HashMap 初期容量。粒子数とセル数の中間程度を狙い、2冪に正規化。
+        let num_particles = (particle.num_large as usize)
+            .saturating_add(particle.num_small as usize)
+            .max(1);
+        let target_capacity = num_particles
+            .saturating_mul(2)
+            .max(approx_cells / 2)
+            .max(1024);
+        let table_size = target_capacity
+            .checked_next_power_of_two()
+            .unwrap_or(4096)
+            .clamp(1024, 1 << 20);
+
+        Self {
+            cell_size,
+            table_size,
+        }
+    }
+
     /// ワールドサイズからグリッド次元を計算（GPU用）
     /// world_half: 各軸の半分のサイズ（例: container.half_extents）
     pub fn compute_grid_dim(&self, world_half: [f32; 3]) -> u32 {
