@@ -5,6 +5,8 @@ mod rendering;
 mod simulation;
 mod ui;
 
+use std::path::PathBuf;
+
 #[cfg(target_family = "wasm")]
 use bevy::asset::{AssetMetaCheck, AssetPlugin};
 use bevy::prelude::*;
@@ -23,8 +25,7 @@ use rendering::{
     update_container_transforms, GpuInstancingPlugin, RenderExtractResourcesPlugin,
 };
 use simulation::{
-    constants::{PhysicsBackend, SimulationConstants},
-    state::SimulationState,
+    config_toml::resolve_startup_config, constants::PhysicsBackend, state::SimulationState,
 };
 use ui::UiPlugin;
 
@@ -33,6 +34,12 @@ pub use wasm_bindgen_rayon::init_thread_pool;
 
 #[cfg_attr(target_family = "wasm", wasm_bindgen)]
 pub fn run() {
+    run_with_config_path(None);
+}
+
+pub fn run_with_config_path(config_path: Option<PathBuf>) {
+    let loaded = resolve_startup_config(config_path.as_deref());
+
     let default_plugins = DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
             title: "Granular Clock".into(),
@@ -48,8 +55,8 @@ pub fn run() {
         ..default()
     });
 
-    App::new()
-        .add_plugins(default_plugins)
+    let mut app = App::new();
+    app.add_plugins(default_plugins)
         .add_plugins(camera_plugin())
         // Shared (CPU/GPU 共通): Main→Render 抽出
         .add_plugins(RenderExtractResourcesPlugin)
@@ -63,7 +70,8 @@ pub fn run() {
         // UI
         .add_plugins(UiPlugin)
         // リソース
-        .insert_resource(SimulationConstants::default())
+        .insert_resource(loaded.simulation)
+        .insert_resource(loaded.ui_ranges)
         .insert_resource(PhysicsBackend::default())
         .insert_resource(ContactHistory::default())
         .insert_resource(DistributionHistory::default())
@@ -83,5 +91,11 @@ pub fn run() {
         .add_systems(Update, update_distribution)
         // デバッグ出力は必要時のみ有効化
         // .add_systems(Update, debug_particles)
-        .run();
+        ;
+
+    for warning in loaded.warnings {
+        warn!("{warning}");
+    }
+
+    app.run();
 }

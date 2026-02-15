@@ -10,7 +10,7 @@ use crate::analysis::{CurrentDistribution, DistributionHistory};
 use crate::physics::{ParticleSize, ParticleStore};
 use crate::rendering::MainCamera;
 use crate::simulation::{
-    constants::{PhysicsBackend, SimulationConstants},
+    constants::{PhysicsBackend, SimulationConstants, UiControlRanges},
     state::SimulationState,
 };
 
@@ -89,6 +89,7 @@ fn draw_control_panel_egui(
     mut contexts: EguiContexts,
     time: Res<Time>,
     mut constants: ResMut<SimulationConstants>,
+    ui_ranges: Res<UiControlRanges>,
     mut backend: ResMut<PhysicsBackend>,
     mut sim_state: ResMut<SimulationState>,
     mut history: ResMut<DistributionHistory>,
@@ -177,17 +178,31 @@ fn draw_control_panel_egui(
                 );
                 ui.add_space(2.0);
                 ui.checkbox(&mut constants.oscillation.enabled, "Enabled");
-                ui.add(
-                    egui::Slider::new(&mut constants.oscillation.amplitude, 0.001..=0.1)
-                        .text("Amplitude [m]")
-                        .step_by(0.001)
-                        .fixed_decimals(3),
+                constants.oscillation.amplitude = constants.oscillation.amplitude.clamp(
+                    ui_ranges.oscillation_amplitude.min,
+                    ui_ranges.oscillation_amplitude.max,
                 );
                 ui.add(
-                    egui::Slider::new(&mut constants.oscillation.frequency, 1.0..=20.0)
-                        .text("Frequency [Hz]")
-                        .step_by(1.0)
-                        .fixed_decimals(1),
+                    egui::Slider::new(
+                        &mut constants.oscillation.amplitude,
+                        ui_ranges.oscillation_amplitude.min..=ui_ranges.oscillation_amplitude.max,
+                    )
+                    .text("Amplitude [m]")
+                    .step_by(ui_ranges.oscillation_amplitude.step as f64)
+                    .fixed_decimals(3),
+                );
+                constants.oscillation.frequency = constants.oscillation.frequency.clamp(
+                    ui_ranges.oscillation_frequency.min,
+                    ui_ranges.oscillation_frequency.max,
+                );
+                ui.add(
+                    egui::Slider::new(
+                        &mut constants.oscillation.frequency,
+                        ui_ranges.oscillation_frequency.min..=ui_ranges.oscillation_frequency.max,
+                    )
+                    .text("Frequency [Hz]")
+                    .step_by(ui_ranges.oscillation_frequency.step as f64)
+                    .fixed_decimals(1),
                 );
             });
 
