@@ -4,7 +4,7 @@ use bevy_egui::{
     EguiPrimaryContextPass,
 };
 use bevy_panorbit_camera::PanOrbitCamera;
-use egui_plot::{HLine, Legend, Line, Plot};
+use egui_plot::{Corner, HLine, Legend, Line, Plot};
 
 use crate::analysis::{CurrentDistribution, DistributionHistory};
 use crate::physics::{ParticleSize, ParticleStore};
@@ -92,7 +92,6 @@ fn draw_control_panel_egui(
     ui_ranges: Res<UiControlRanges>,
     mut backend: ResMut<PhysicsBackend>,
     mut sim_state: ResMut<SimulationState>,
-    mut history: ResMut<DistributionHistory>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
 
@@ -228,7 +227,6 @@ fn draw_control_panel_egui(
                     .clicked()
                 {
                     sim_state.reset_requested = true;
-                    history.clear();
                 }
             });
 
@@ -329,13 +327,20 @@ fn draw_distribution_panel_egui(
 
                 Plot::new("distribution_history_plot")
                     .height(150.0)
-                    .legend(Legend::default())
+                    .legend(Legend::default().position(Corner::LeftTop))
                     .allow_zoom(false)
-                    .allow_drag(false)
+                    .allow_drag([true, false])
                     .allow_scroll(false)
                     .include_y(0.0)
                     .include_y(1.0)
                     .show(ui, |plot_ui| {
+                        // Drag で過去範囲を見ている間は保持し、カーソルが離れたら
+                        // X 軸の auto-bounds に戻して最新データへ追従させる。
+                        let response = plot_ui.response();
+                        if !response.hovered() && !response.dragged() {
+                            plot_ui.set_auto_bounds([true, true]);
+                        }
+
                         plot_ui.hline(HLine::new("50%", 0.5).color(egui::Color32::GRAY));
 
                         if !large_points.is_empty() {
@@ -361,6 +366,7 @@ fn apply_reset_request(
     mut sim_state: ResMut<SimulationState>,
     constants: Res<SimulationConstants>,
     mut store: ResMut<ParticleStore>,
+    mut history: ResMut<DistributionHistory>,
 ) {
     if !sim_state.reset_requested {
         return;
@@ -368,6 +374,7 @@ fn apply_reset_request(
 
     sim_state.reset_requested = false;
     sim_state.reset_time();
+    history.clear();
 
     store.clear();
 
