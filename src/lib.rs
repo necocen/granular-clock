@@ -40,12 +40,16 @@ pub fn run() {
 pub fn run_with_config_path(config_path: Option<PathBuf>) {
     let loaded = resolve_startup_config(config_path.as_deref());
 
+    let primary_window = Window {
+        title: "Granular Clock".into(),
+        resolution: (1280u32, 960u32).into(),
+        #[cfg(target_family = "wasm")]
+        fit_canvas_to_parent: true,
+        ..default()
+    };
+
     let default_plugins = DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(Window {
-            title: "Granular Clock".into(),
-            resolution: (1280u32, 960u32).into(),
-            ..default()
-        }),
+        primary_window: Some(primary_window),
         ..default()
     });
 
