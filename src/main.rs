@@ -11,18 +11,21 @@ use std::path::PathBuf;
 
 #[cfg(target_family = "wasm")]
 use bevy::asset::{AssetMetaCheck, AssetPlugin};
+#[cfg(target_family = "wasm")]
+use bevy::log::LogPlugin;
 use bevy::prelude::*;
 
-use analysis::{update_distribution, CurrentDistribution, DistributionHistory};
+use analysis::{CurrentDistribution, DistributionHistory, update_distribution};
 // use debug::debug_particles; // 必要時のみ有効化
 use physics::{
-    cpu::{run_physics_substeps, InstanceCpuWriterPlugin},
-    gpu::{apply_gpu_results, GpuInstanceWriterPlugin, GpuPhysicsPlugin},
-    init_spatial_hash_grid, ContactHistory, ParticleStore,
+    ContactHistory, ParticleStore,
+    cpu::{InstanceCpuWriterPlugin, run_physics_substeps},
+    gpu::{GpuInstanceWriterPlugin, GpuPhysicsPlugin, apply_gpu_results},
+    init_spatial_hash_grid,
 };
 use rendering::{
-    camera_plugin, is_cpu_backend, is_gpu_backend, setup_camera, setup_rendering, spawn_particles,
-    update_container_transforms, GpuInstancingPlugin, RenderExtractResourcesPlugin,
+    GpuInstancingPlugin, RenderExtractResourcesPlugin, camera_plugin, is_cpu_backend,
+    is_gpu_backend, setup_camera, setup_rendering, spawn_particles, update_container_transforms,
 };
 use simulation::{
     config_toml::resolve_startup_config, constants::PhysicsBackend, state::SimulationState,
@@ -54,10 +57,12 @@ fn run_with_config_path(config_path: Option<PathBuf>) {
     });
 
     #[cfg(target_family = "wasm")]
-    let default_plugins = default_plugins.set(AssetPlugin {
-        meta_check: AssetMetaCheck::Never,
-        ..default()
-    });
+    let default_plugins = default_plugins
+        .disable::<LogPlugin>() // ChromeではLogPluginが原因でGCが過剰に走るため、wasmビルドでは無効化する
+        .set(AssetPlugin {
+            meta_check: AssetMetaCheck::Never,
+            ..default()
+        });
 
     let mut app = App::new();
     app.add_plugins(default_plugins)
