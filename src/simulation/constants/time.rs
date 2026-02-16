@@ -3,7 +3,7 @@ use bevy::prelude::*;
 /// 物理計算バックエンド
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PhysicsBackend {
-    /// CPU（rayon並列化）
+    /// CPU
     Cpu,
     /// GPU（WebGPU compute shader）
     #[default]

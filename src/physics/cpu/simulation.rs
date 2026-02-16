@@ -1,5 +1,4 @@
 use bevy::prelude::*;
-use rayon::prelude::*;
 
 use crate::physics::cpu::contact::{ContactForce, ContactState};
 use crate::physics::cpu::{
@@ -28,7 +27,7 @@ fn build_spatial_grid(grid: &mut SpatialHashGrid, particles: &ParticleStore) {
 
 /// 全パーティクルの力・トルクをゼロクリア
 fn clear_forces(particles: &mut ParticleStore) {
-    particles.particles.par_iter_mut().for_each(|p| {
+    particles.particles.iter_mut().for_each(|p| {
         p.force = Vec3::ZERO;
         p.torque = Vec3::ZERO;
     });
@@ -78,12 +77,12 @@ fn compute_particle_collisions(
         pairs
     });
 
-    // 接触計算本体は並列化。既存接触状態は読み取り専用で参照し、
+    // 接触計算本体。既存接触状態は読み取り専用で参照し、
     // 最終的な加算順序は pairs の順序に揃えて従来の決定性を保つ。
     let pair_results: Vec<PairContactResult> = {
         let previous_contacts = &contact_history.contacts;
         pairs
-            .into_par_iter()
+            .into_iter()
             .map(|(i, j)| {
                 let p_i = &particles.particles[i];
                 let p_j = &particles.particles[j];
@@ -143,7 +142,7 @@ fn compute_wall_collisions(
     container_offset: f32,
     wall_props: &WallProperties,
 ) {
-    particles.particles.par_iter_mut().for_each(|p| {
+    particles.particles.iter_mut().for_each(|p| {
         let wall_force = compute_wall_contact_force(
             p.position,
             p.velocity,
@@ -163,7 +162,7 @@ fn compute_wall_collisions(
 fn integrate_positions(particles: &mut ParticleStore, physics: &PhysicsConstants, dt: f32) {
     let gravity = physics.gravity;
 
-    particles.particles.par_iter_mut().for_each(|p| {
+    particles.particles.iter_mut().for_each(|p| {
         integrate_first_half(
             &mut p.position,
             &mut p.velocity,
@@ -182,7 +181,7 @@ fn integrate_positions(particles: &mut ParticleStore, physics: &PhysicsConstants
 fn integrate_velocities(particles: &mut ParticleStore, physics: &PhysicsConstants, dt: f32) {
     let gravity = physics.gravity;
 
-    particles.particles.par_iter_mut().for_each(|p| {
+    particles.particles.iter_mut().for_each(|p| {
         integrate_second_half(
             &mut p.velocity,
             &mut p.angular_velocity,
@@ -209,7 +208,7 @@ fn clamp_particles(
     const MAX_LINEAR_VEL: f32 = 10.0;
     const MAX_ANGULAR_VEL: f32 = 100.0;
 
-    particles.particles.par_iter_mut().for_each(|p| {
+    particles.particles.iter_mut().for_each(|p| {
         clamp_to_container(&mut p.position, &mut p.velocity, p.radius, box_min, box_max);
         clamp_velocity(
             &mut p.velocity,

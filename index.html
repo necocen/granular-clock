@@ -54,8 +54,7 @@
     <link
         data-trunk
         rel="rust"
-        data-target-name="granular_clock"
-        data-bindgen-target="web"
+        data-type="main"
         data-wasm-opt="z"
         data-no-default-features
     />
@@ -75,41 +74,19 @@
             `;
         }
 
-        async function startWasmApp(bindings) {
-            const threadCount = Math.max(1, navigator.hardwareConcurrency || 1);
-            await bindings.initThreadPool(threadCount);
-            bindings.run();
-        }
+        window.addEventListener("TrunkApplicationStarted", () => {
+            requestAnimationFrame(hideLoading);
+        });
+
+        window.addEventListener("TrunkApplicationError", (event) => {
+            console.error("Failed to bootstrap wasm app:", event);
+            showLoadingError("Failed to initialize WebAssembly app");
+        });
 
         window.addEventListener("load", function() {
             if (!navigator.gpu) {
-                document.getElementById("loading").innerHTML = `
-                    <p style="color: #e74c3c;">WebGPU is not supported</p>
-                    <p style="font-size: 14px; color: #888;">Please use Chrome 113+, Firefox 141+, or Safari 26+</p>
-                `;
-                return;
+                showLoadingError("WebGPU is not supported");
             }
-
-            const boot = async () => {
-                try {
-                    if (!window.wasmBindings) {
-                        throw new Error("wasm bindings are not available");
-                    }
-                    await startWasmApp(window.wasmBindings);
-                    // Bevy app startup is async; hide on next frame after run() starts.
-                    requestAnimationFrame(hideLoading);
-                } catch (error) {
-                    console.error("Failed to bootstrap wasm + rayon thread pool:", error);
-                    showLoadingError("Failed to initialize WebAssembly app");
-                }
-            };
-
-            if (window.wasmBindings) {
-                boot();
-                return;
-            }
-
-            window.addEventListener("TrunkApplicationStarted", boot, { once: true });
         });
     </script>
 </body>
