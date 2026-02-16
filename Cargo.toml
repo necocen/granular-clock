@@ -41,3 +41,10 @@ opt-level = 3
 [profile.release]
 opt-level = "z"
 lto = true
+
+[profile.release-wasm]
+panic = "abort"
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1

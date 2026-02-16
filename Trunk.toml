@@ -1,6 +1,9 @@
 [build]
 target = "index.html"
 dist = "dist"
+release = true
+cargo_profile = "release-wasm"
+minify = "on_release"
 
 [serve]
 addresses = ["127.0.0.1"]
