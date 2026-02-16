@@ -1,9 +1,9 @@
 use bevy::prelude::*;
 
 use crate::physics::{
-    clamp_to_container, clamp_velocity, compute_particle_contact_force,
-    compute_wall_contact_force as compute_wall_contact_force_core, integrate_first_half,
-    integrate_second_half, ContactState, WallContactForce,
+    ContactState, WallContactForce, clamp_to_container, clamp_velocity,
+    compute_particle_contact_force, compute_wall_contact_force as compute_wall_contact_force_core,
+    integrate_first_half, integrate_second_half,
 };
 use crate::simulation::constants::{ContainerParams, MaterialProperties, WallProperties};
 

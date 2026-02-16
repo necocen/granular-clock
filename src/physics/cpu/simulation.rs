@@ -1,15 +1,16 @@
 use bevy::prelude::*;
 
+use crate::physics::ParticleStore;
 use crate::physics::cpu::contact::{ContactForce, ContactState};
 use crate::physics::cpu::{
-    clamp_to_container, clamp_velocity, compute_particle_contact_force, compute_wall_contact_force,
-    integrate_first_half, integrate_second_half, ContactHistory, SpatialHashGrid,
+    ContactHistory, SpatialHashGrid, clamp_to_container, clamp_velocity,
+    compute_particle_contact_force, compute_wall_contact_force, integrate_first_half,
+    integrate_second_half,
 };
-use crate::physics::ParticleStore;
 use crate::simulation::{
     constants::{
-        advance_oscillation, ContainerParams, MaterialProperties, PhysicsConstants,
-        SimulationConstants, WallProperties,
+        ContainerParams, MaterialProperties, PhysicsConstants, SimulationConstants, WallProperties,
+        advance_oscillation,
     },
     state::SimulationState,
 };

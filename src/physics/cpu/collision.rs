@@ -59,11 +59,7 @@ fn divider_tiebreak_sign(pos: Vec3) -> f32 {
     let qz = (pos.z * 1024.0).floor() as i32;
     let seed =
         (qy as u32).wrapping_mul(0x9E37_79B1) ^ (qz as u32).wrapping_mul(0x85EB_CA6B) ^ 0xC2B2_AE35;
-    if (seed & 1) == 0 {
-        -1.0
-    } else {
-        1.0
-    }
+    if (seed & 1) == 0 { -1.0 } else { 1.0 }
 }
 
 /// 粒子と壁との接触力を計算（ContainerParams + offset）

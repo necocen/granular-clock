@@ -7,8 +7,8 @@ use std::num::NonZeroU64;
 
 use crate::physics::compute_wall_contact_force as compute_wall_contact_force_core;
 use crate::physics::{
-    clamp_to_container, clamp_velocity, compute_particle_contact_force, integrate_first_half,
-    integrate_second_half, ContactState, WallContactForce,
+    ContactState, WallContactForce, clamp_to_container, clamp_velocity,
+    compute_particle_contact_force, integrate_first_half, integrate_second_half,
 };
 use crate::simulation::constants::{ContainerParams, MaterialProperties, WallProperties};
 
@@ -743,10 +743,12 @@ fn test_gpu_collision_different_sizes_energy_conservation() {
     );
 
     assert!(
-            final_ke <= initial_ke * 1.01,
-            "Different-size final KE should not exceed initial: initial={:.6}, final={:.6}, ratio={:.4}",
-            initial_ke, final_ke, final_ke / initial_ke
-        );
+        final_ke <= initial_ke * 1.01,
+        "Different-size final KE should not exceed initial: initial={:.6}, final={:.6}, ratio={:.4}",
+        initial_ke,
+        final_ke,
+        final_ke / initial_ke
+    );
 }
 
 #[test]
@@ -965,12 +967,19 @@ fn test_cpu_gpu_contact_force_consistency() {
             let cos_sim = dot / (cpu_mag * gpu_mag);
 
             println!(
-                    "[{}] CPU: [{:.4}, {:.4}, {:.4}] (mag={:.4}), GPU: [{:.4}, {:.4}, {:.4}] (mag={:.4}), ratio={:.4}, cos={:.6}",
-                    label,
-                    cpu_force[0], cpu_force[1], cpu_force[2], cpu_mag,
-                    gpu_force[0], gpu_force[1], gpu_force[2], gpu_mag,
-                    mag_ratio, cos_sim,
-                );
+                "[{}] CPU: [{:.4}, {:.4}, {:.4}] (mag={:.4}), GPU: [{:.4}, {:.4}, {:.4}] (mag={:.4}), ratio={:.4}, cos={:.6}",
+                label,
+                cpu_force[0],
+                cpu_force[1],
+                cpu_force[2],
+                cpu_mag,
+                gpu_force[0],
+                gpu_force[1],
+                gpu_force[2],
+                gpu_mag,
+                mag_ratio,
+                cos_sim,
+            );
 
             // 方向はほぼ一致するはず
             assert!(

@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy_egui::{
-    egui, input::EguiWantsInput, EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPostUpdateSet,
-    EguiPrimaryContextPass,
+    EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPostUpdateSet, EguiPrimaryContextPass, egui,
+    input::EguiWantsInput,
 };
 use bevy_panorbit_camera::PanOrbitCamera;
 use egui_plot::{Corner, HLine, Legend, Line, Plot};

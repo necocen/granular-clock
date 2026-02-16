@@ -9,7 +9,7 @@ pub mod time;
 pub use config::SimulationConfig;
 pub use container::ContainerParams;
 pub use oscillation::{
-    advance_oscillation, advance_oscillation_phase, oscillation_displacement, OscillationParams,
+    OscillationParams, advance_oscillation, advance_oscillation_phase, oscillation_displacement,
 };
 pub use physics::{GridSettings, MaterialProperties, PhysicsConstants, WallProperties};
 pub use time::{PhysicsBackend, SimulationSettings, SimulationTimeParams};

@@ -4,20 +4,20 @@
 use bevy::{
     prelude::*,
     render::{
+        Render, RenderApp, RenderSystems,
         extract_resource::{ExtractResource, ExtractResourcePlugin},
         graph::CameraDriverLabel,
         render_graph::{Node, NodeRunError, RenderGraph, RenderGraphContext, RenderLabel},
         render_resource::*,
         renderer::{RenderContext, RenderDevice, RenderQueue},
-        Render, RenderApp, RenderSystems,
     },
 };
 use bytemuck::{Pod, Zeroable};
 
 use crate::{
     rendering::{
-        is_gpu_backend, normalized_instance_capacity, InstanceBuffer, ParticleBatchMarker,
-        RenderInstanceBufferResource, LARGE_PARTICLE_COLOR, SMALL_PARTICLE_COLOR,
+        InstanceBuffer, LARGE_PARTICLE_COLOR, ParticleBatchMarker, RenderInstanceBufferResource,
+        SMALL_PARTICLE_COLOR, is_gpu_backend, normalized_instance_capacity,
     },
     simulation::constants::{PhysicsBackend, SimulationConstants},
 };

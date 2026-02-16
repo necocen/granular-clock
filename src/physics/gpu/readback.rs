@@ -10,7 +10,7 @@ use bevy::{
         renderer::RenderDevice,
     },
 };
-use std::sync::{atomic::AtomicBool, Arc, RwLock};
+use std::sync::{Arc, RwLock, atomic::AtomicBool};
 
 use super::buffers::ParticleGpu;
 

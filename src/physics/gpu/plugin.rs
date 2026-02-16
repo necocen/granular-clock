@@ -1,18 +1,18 @@
 use bevy::{
     prelude::*,
     render::{
+        Render, RenderApp,
         extract_resource::{ExtractResource, ExtractResourcePlugin},
         render_graph::RenderGraph,
         render_resource::{CommandEncoderDescriptor, MapMode},
         renderer::{RenderDevice, RenderQueue},
-        Render, RenderApp,
     },
 };
 use std::sync::Arc;
 
 use crate::physics::{ParticleSize, ParticleStore};
 use crate::simulation::{
-    constants::{advance_oscillation, PhysicsBackend, SimulationConstants},
+    constants::{PhysicsBackend, SimulationConstants, advance_oscillation},
     state::SimulationState,
 };
 

@@ -4,16 +4,17 @@
 use bevy::{
     prelude::*,
     render::{
+        Render, RenderApp, RenderSystems,
         extract_resource::ExtractResourcePlugin,
         renderer::{RenderDevice, RenderQueue},
-        Render, RenderApp, RenderSystems,
     },
 };
 
 use crate::physics::{ParticleSize, ParticleStore};
 use crate::rendering::{
-    is_cpu_backend, normalized_instance_capacity, CpuInstanceData, InstanceBuffer, InstanceData,
-    ParticleBatchMarker, RenderInstanceBufferResource, LARGE_PARTICLE_COLOR, SMALL_PARTICLE_COLOR,
+    CpuInstanceData, InstanceBuffer, InstanceData, LARGE_PARTICLE_COLOR, ParticleBatchMarker,
+    RenderInstanceBufferResource, SMALL_PARTICLE_COLOR, is_cpu_backend,
+    normalized_instance_capacity,
 };
 
 pub struct InstanceCpuWriterPlugin;

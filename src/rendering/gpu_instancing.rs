@@ -4,7 +4,7 @@
 use bevy::{
     camera::visibility::NoFrustumCulling,
     core_pipeline::core_3d::Transparent3d,
-    ecs::system::{lifetimeless::*, SystemParamItem},
+    ecs::system::{SystemParamItem, lifetimeless::*},
     mesh::VertexBufferLayout,
     pbr::{
         MeshPipeline, MeshPipelineKey, RenderMeshInstances, SetMeshBindGroup, SetMeshViewBindGroup,
@@ -12,8 +12,9 @@ use bevy::{
     },
     prelude::*,
     render::{
+        Render, RenderApp, RenderStartup, RenderSystems,
         extract_component::{ExtractComponent, ExtractComponentPlugin},
-        mesh::{allocator::MeshAllocator, RenderMesh, RenderMeshBufferInfo},
+        mesh::{RenderMesh, RenderMeshBufferInfo, allocator::MeshAllocator},
         render_asset::RenderAssets,
         render_phase::{
             AddRenderCommand, DrawFunctions, PhaseItem, PhaseItemExtraIndex, RenderCommand,
@@ -21,7 +22,6 @@ use bevy::{
         },
         render_resource::*,
         view::ExtractedView,
-        Render, RenderApp, RenderStartup, RenderSystems,
     },
 };
 

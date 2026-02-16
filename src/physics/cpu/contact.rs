@@ -23,11 +23,7 @@ pub struct ContactHistory {
 impl ContactHistory {
     /// 接触ペアのキーを生成（順序を正規化）
     pub fn key(i: usize, j: usize) -> (usize, usize) {
-        if i < j {
-            (i, j)
-        } else {
-            (j, i)
-        }
+        if i < j { (i, j) } else { (j, i) }
     }
 
     /// 非アクティブな接触を削除
