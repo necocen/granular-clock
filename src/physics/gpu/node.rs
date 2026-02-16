@@ -64,6 +64,14 @@ impl Node for GpuPhysicsNode {
         let Some(pipelines) = world.get_resource::<GpuPhysicsPipelines>() else {
             return;
         };
+
+        let needs_rebuild = self.bind_groups.is_none()
+            || world.is_resource_changed::<GpuPhysicsBuffers>()
+            || world.is_resource_changed::<GpuPhysicsPipelines>();
+        if !needs_rebuild {
+            return;
+        }
+
         let render_device = world.resource::<RenderDevice>();
         let pipeline_cache = world.resource::<PipelineCache>();
 

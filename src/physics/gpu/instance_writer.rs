@@ -118,7 +118,6 @@ impl GpuInstanceWriteNode {
 
 impl Node for GpuInstanceWriteNode {
     fn update(&mut self, world: &mut World) {
-        self.bind_group = None;
         self.workgroups = 0;
         self.params = InstanceParams::default();
 
@@ -160,29 +159,35 @@ impl Node for GpuInstanceWriteNode {
             return;
         };
 
-        let render_device = world.resource::<RenderDevice>();
-        let bind_group_layout = pipeline.get_bind_group_layout(0);
-        let bind_group_layout: BindGroupLayout = bind_group_layout.clone().into();
-        let bind_group = render_device.create_bind_group(
-            Some("particle_to_instance_bind_group"),
-            &bind_group_layout,
-            &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: physics_buffers.latest_particles().as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: instance_buffer.buffer.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: resources.params_buffer.as_entire_binding(),
-                },
-            ],
-        );
+        let needs_rebuild = self.bind_group.is_none()
+            || world.is_resource_changed::<GpuPhysicsBuffers>()
+            || world.is_resource_changed::<RenderInstanceBufferResource>()
+            || world.is_resource_changed::<GpuInstanceWriterResources>();
+        if needs_rebuild {
+            let render_device = world.resource::<RenderDevice>();
+            let bind_group_layout = pipeline.get_bind_group_layout(0);
+            let bind_group_layout: BindGroupLayout = bind_group_layout.clone().into();
+            let bind_group = render_device.create_bind_group(
+                Some("particle_to_instance_bind_group"),
+                &bind_group_layout,
+                &[
+                    BindGroupEntry {
+                        binding: 0,
+                        resource: physics_buffers.latest_particles().as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 1,
+                        resource: instance_buffer.buffer.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 2,
+                        resource: resources.params_buffer.as_entire_binding(),
+                    },
+                ],
+            );
+            self.bind_group = Some(bind_group);
+        }
 
-        self.bind_group = Some(bind_group);
         self.workgroups = total.div_ceil(64);
         self.params = InstanceParams {
             num_particles: total,
