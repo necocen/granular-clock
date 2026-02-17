@@ -38,12 +38,55 @@ pub struct GpuPhysicsNode {
     bind_groups: Option<GpuPhysicsBindGroups>,
     /// 1フレームあたりのサブステップ数
     substeps: u32,
+    /// 現在キャッシュしている sort_count
+    cached_sort_count: u32,
+    /// 現在キャッシュしている sort params の stride
+    cached_sort_stride: u32,
+    /// bitonic sort のステージ数
+    sort_stage_count: usize,
+    /// 動的オフセット用にパック済みの sort params
+    sort_params_packed: Vec<u8>,
+    /// sort params の再アップロードが必要か
+    sort_params_dirty: bool,
 }
 
 impl GpuPhysicsNode {
     pub fn new() -> Self {
         Self::default()
     }
+}
+
+fn build_bitonic_sort_params_payload(sort_count: u32, stride: u32) -> (Vec<u8>, usize) {
+    let mut stages: Vec<SortParamsGpu> = Vec::new();
+    let mut k = 2u32;
+    while k <= sort_count {
+        let mut j = k / 2;
+        while j > 0 {
+            stages.push(SortParamsGpu {
+                j,
+                k,
+                n: sort_count,
+                _pad: 0,
+            });
+            j /= 2;
+        }
+        k *= 2;
+    }
+
+    let stage_count = stages.len();
+    if stage_count == 0 {
+        return (Vec::new(), 0);
+    }
+
+    let stride = stride as usize;
+    let mut packed = vec![0u8; stage_count * stride];
+    for (idx, params) in stages.iter().enumerate() {
+        let start = idx * stride;
+        let end = start + std::mem::size_of::<SortParamsGpu>();
+        packed[start..end].copy_from_slice(bytemuck::bytes_of(params));
+    }
+
+    (packed, stage_count)
 }
 
 impl Node for GpuPhysicsNode {
@@ -65,9 +108,40 @@ impl Node for GpuPhysicsNode {
             return;
         };
 
-        let needs_rebuild = self.bind_groups.is_none()
-            || world.is_resource_changed::<GpuPhysicsBuffers>()
-            || world.is_resource_changed::<GpuPhysicsPipelines>();
+        let buffers_changed = world.is_resource_changed::<GpuPhysicsBuffers>();
+        let pipelines_changed = world.is_resource_changed::<GpuPhysicsPipelines>();
+
+        // sort params は粒子数（= sort_count）か stride が変わったときに再生成。
+        let sort_count = buffers.num_particles.next_power_of_two();
+        if sort_count != self.cached_sort_count
+            || buffers.sort_params_stride != self.cached_sort_stride
+        {
+            self.cached_sort_count = sort_count;
+            self.cached_sort_stride = buffers.sort_params_stride;
+            let (packed, stage_count) =
+                build_bitonic_sort_params_payload(sort_count, buffers.sort_params_stride);
+            self.sort_params_packed = packed;
+            self.sort_stage_count = stage_count;
+            self.sort_params_dirty = true;
+        }
+
+        if buffers_changed {
+            self.sort_params_dirty = true;
+        }
+
+        if self.sort_stage_count as u32 <= buffers.sort_params_capacity_passes {
+            if self.sort_params_dirty && !self.sort_params_packed.is_empty() {
+                let render_queue = world.resource::<RenderQueue>();
+                render_queue.write_buffer(&buffers.sort_params, 0, &self.sort_params_packed);
+            }
+        } else {
+            // 容量不足時は run 側でもスキップする。
+            self.sort_stage_count = 0;
+            self.sort_params_packed.clear();
+        }
+        self.sort_params_dirty = false;
+
+        let needs_rebuild = self.bind_groups.is_none() || buffers_changed || pipelines_changed;
         if !needs_rebuild {
             return;
         }
@@ -247,44 +321,20 @@ impl Node for GpuPhysicsNode {
 
                 // Pass 2: Bitonic Sort
                 {
-                    let mut stages = Vec::new();
-                    let mut k = 2u32;
-                    while k <= sort_count {
-                        let mut j = k / 2;
-                        while j > 0 {
-                            stages.push(SortParamsGpu {
-                                j,
-                                k,
-                                n: sort_count,
-                                _pad: 0,
-                            });
-                            j /= 2;
-                        }
-                        k *= 2;
-                    }
-
-                    if stages.is_empty() {
+                    if self.sort_stage_count == 0 {
                         // 1粒子など、ソート不要ケース
-                    } else if stages.len() as u32 > buffers.sort_params_capacity_passes {
+                    } else if self.sort_stage_count as u32 > buffers.sort_params_capacity_passes {
                         return;
                     } else {
-                        let stride = buffers.sort_params_stride as usize;
-                        let mut packed = vec![0u8; stages.len() * stride];
-                        for (idx, params) in stages.iter().enumerate() {
-                            let start = idx * stride;
-                            let end = start + std::mem::size_of::<SortParamsGpu>();
-                            packed[start..end].copy_from_slice(bytemuck::bytes_of(params));
-                        }
-                        render_queue.write_buffer(&buffers.sort_params, 0, &packed);
-
-                        for stage_idx in 0..stages.len() {
+                        // 1pass 内で全ステージを dispatch して、Pass生成オーバーヘッドを削減する。
+                        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
+                            label: Some("bitonic_sort_pass"),
+                            timestamp_writes: None,
+                        });
+                        pass.set_pipeline(bitonic_sort_pipeline);
+                        pass.set_bind_group(0, &bind_groups.spatial, &[]);
+                        for stage_idx in 0..self.sort_stage_count {
                             let dynamic_offset = stage_idx as u32 * buffers.sort_params_stride;
-                            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
-                                label: Some("bitonic_sort_pass"),
-                                timestamp_writes: None,
-                            });
-                            pass.set_pipeline(bitonic_sort_pipeline);
-                            pass.set_bind_group(0, &bind_groups.spatial, &[]);
                             pass.set_bind_group(1, &bind_groups.sort_params, &[dynamic_offset]);
                             pass.dispatch_workgroups(workgroups_sort_256, 1, 1);
                         }
