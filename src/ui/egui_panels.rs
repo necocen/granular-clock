@@ -14,7 +14,6 @@ use crate::simulation::{
     state::SimulationState,
 };
 
-const MAX_GRAPH_POINTS: usize = 600;
 const CONTROL_WINDOW_WIDTH: f32 = 360.0;
 const DISTRIBUTION_WINDOW_WIDTH: f32 = 440.0;
 
@@ -309,19 +308,16 @@ fn draw_distribution_panel_egui(
                         .strong(),
                 );
 
-                let start_idx = history.timestamps.len().saturating_sub(MAX_GRAPH_POINTS);
                 let large_points: Vec<[f64; 2]> = history
                     .timestamps
                     .iter()
                     .zip(history.left_large_ratio.iter())
-                    .skip(start_idx)
                     .map(|(t, r)| [*t, *r])
                     .collect();
                 let small_points: Vec<[f64; 2]> = history
                     .timestamps
                     .iter()
                     .zip(history.left_small_ratio.iter())
-                    .skip(start_idx)
                     .map(|(t, r)| [*t, *r])
                     .collect();
 

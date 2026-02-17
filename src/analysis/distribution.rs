@@ -13,8 +13,8 @@ pub struct DistributionHistory {
     pub left_large_ratio: VecDeque<f64>,
     /// 左側の小粒子の割合
     pub left_small_ratio: VecDeque<f64>,
-    /// 最大サンプル数
-    pub max_samples: usize,
+    /// 最大サンプル数（None で無制限）
+    pub max_samples: Option<usize>,
     /// サンプリング間隔（秒）
     pub sample_interval: f64,
     /// 最後のサンプル時刻
@@ -23,16 +23,17 @@ pub struct DistributionHistory {
 
 impl Default for DistributionHistory {
     fn default() -> Self {
-        Self::new(600, 0.2) // 600サンプル x 0.2秒 = 120秒（2分）分
+        Self::new(None, 0.2) // None は無制限: リセットまで全履歴を保持
     }
 }
 
 impl DistributionHistory {
-    pub fn new(max_samples: usize, sample_interval: f64) -> Self {
+    pub fn new(max_samples: Option<usize>, sample_interval: f64) -> Self {
+        let capacity = max_samples.unwrap_or(0);
         Self {
-            timestamps: VecDeque::with_capacity(max_samples),
-            left_large_ratio: VecDeque::with_capacity(max_samples),
-            left_small_ratio: VecDeque::with_capacity(max_samples),
+            timestamps: VecDeque::with_capacity(capacity),
+            left_large_ratio: VecDeque::with_capacity(capacity),
+            left_small_ratio: VecDeque::with_capacity(capacity),
             max_samples,
             sample_interval,
             last_sample_time: -1.0,
@@ -134,10 +135,12 @@ pub fn update_distribution(
             .push_back(current.left_small_ratio());
 
         // 古いデータを削除
-        while history.timestamps.len() > history.max_samples {
-            history.timestamps.pop_front();
-            history.left_large_ratio.pop_front();
-            history.left_small_ratio.pop_front();
+        if let Some(limit) = history.max_samples {
+            while history.timestamps.len() > limit {
+                history.timestamps.pop_front();
+                history.left_large_ratio.pop_front();
+                history.left_small_ratio.pop_front();
+            }
         }
     }
 }
