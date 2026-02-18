@@ -22,7 +22,13 @@ use crate::{
     simulation::constants::{PhysicsBackend, SimulationConstants},
 };
 
-use super::{buffers::GpuPhysicsBuffers, node::GpuPhysicsLabel};
+use super::{
+    buffers::GpuPhysicsBuffers,
+    node::GpuPhysicsLabel,
+    shaders::{
+        PARTICLE_TO_INSTANCE_SHADER_HANDLE, PHYSICS_TYPES_SHADER_HANDLE, load_gpu_internal_shaders,
+    },
+};
 
 impl ExtractResource for SimulationConstants {
     type Source = SimulationConstants;
@@ -244,6 +250,8 @@ pub struct GpuInstanceWriterPlugin;
 
 impl Plugin for GpuInstanceWriterPlugin {
     fn build(&self, app: &mut App) {
+        load_gpu_internal_shaders(app);
+
         app.add_plugins(ExtractResourcePlugin::<SimulationConstants>::default());
 
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
@@ -270,7 +278,6 @@ fn init_instance_writer_resources(
     resources: Option<Res<GpuInstanceWriterResources>>,
     render_device: Res<RenderDevice>,
     pipeline_cache: Res<PipelineCache>,
-    asset_server: Res<AssetServer>,
 ) {
     if resources.is_some() {
         return;
@@ -283,8 +290,8 @@ fn init_instance_writer_resources(
         mapped_at_creation: false,
     });
 
-    let physics_types_shader: Handle<Shader> = asset_server.load("shaders/physics_types.wgsl");
-    let shader = asset_server.load("shaders/particle_to_instance.wgsl");
+    let physics_types_shader = PHYSICS_TYPES_SHADER_HANDLE.clone();
+    let shader = PARTICLE_TO_INSTANCE_SHADER_HANDLE.clone();
     let compute_pipeline = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
         label: Some("particle_to_instance_pipeline".into()),
         layout: vec![instance_compute_bind_group_layout_desc()],

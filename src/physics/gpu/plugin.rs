@@ -21,6 +21,7 @@ use super::{
     node::{GpuPhysicsLabel, GpuPhysicsNode},
     pipeline::GpuPhysicsPipelines,
     readback::{GpuReadbackBuffer, ReadbackSettings, ReadbackStaging},
+    shaders::load_gpu_internal_shaders,
 };
 
 /// GPU 物理が有効かどうかのフラグ
@@ -88,6 +89,8 @@ pub struct GpuPhysicsPlugin;
 
 impl Plugin for GpuPhysicsPlugin {
     fn build(&self, app: &mut App) {
+        load_gpu_internal_shaders(app);
+
         // 読み戻しバッファを Main World に追加
         let readback_buffer = GpuReadbackBuffer::default();
 
@@ -135,14 +138,13 @@ fn init_pipelines(
     mut commands: Commands,
     pipelines: Option<Res<GpuPhysicsPipelines>>,
     pipeline_cache: Res<bevy::render::render_resource::PipelineCache>,
-    asset_server: Res<AssetServer>,
 ) {
     // 既に初期化済みならスキップ
     if pipelines.is_some() {
         return;
     }
 
-    let new_pipelines = GpuPhysicsPipelines::create(&pipeline_cache, &asset_server);
+    let new_pipelines = GpuPhysicsPipelines::create(&pipeline_cache);
     commands.insert_resource(new_pipelines);
 }
 

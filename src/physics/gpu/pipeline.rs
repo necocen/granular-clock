@@ -1,5 +1,10 @@
 use bevy::{prelude::*, render::render_resource::*};
 
+use super::shaders::{
+    BITONIC_SORT_SHADER_HANDLE, CELL_RANGES_SHADER_HANDLE, COLLISION_SHADER_HANDLE,
+    HASH_KEYS_SHADER_HANDLE, INTEGRATE_SHADER_HANDLE, PHYSICS_TYPES_SHADER_HANDLE,
+};
+
 /// コンピュートパイプラインのリソース
 #[derive(Resource)]
 pub struct GpuPhysicsPipelines {
@@ -30,7 +35,7 @@ pub struct GpuPhysicsPipelines {
 }
 
 impl GpuPhysicsPipelines {
-    pub fn create(pipeline_cache: &PipelineCache, asset_server: &AssetServer) -> Self {
+    pub fn create(pipeline_cache: &PipelineCache) -> Self {
         // Group 0: params
         let params_bind_group_layout_desc = BindGroupLayoutDescriptor::new(
             "gpu_physics_params_bind_group_layout",
@@ -158,14 +163,14 @@ impl GpuPhysicsPipelines {
         );
 
         // 共有型定義シェーダーをロード（#import 解決に必要）
-        let physics_types_shader: Handle<Shader> = asset_server.load("shaders/physics_types.wgsl");
+        let physics_types_shader = PHYSICS_TYPES_SHADER_HANDLE.clone();
 
         // シェーダーをロード
-        let hash_keys_shader = asset_server.load("shaders/hash_keys.wgsl");
-        let bitonic_sort_shader = asset_server.load("shaders/bitonic_sort.wgsl");
-        let cell_ranges_shader = asset_server.load("shaders/cell_ranges.wgsl");
-        let collision_shader = asset_server.load("shaders/collision.wgsl");
-        let integrate_shader = asset_server.load("shaders/integrate.wgsl");
+        let hash_keys_shader = HASH_KEYS_SHADER_HANDLE.clone();
+        let bitonic_sort_shader = BITONIC_SORT_SHADER_HANDLE.clone();
+        let cell_ranges_shader = CELL_RANGES_SHADER_HANDLE.clone();
+        let collision_shader = COLLISION_SHADER_HANDLE.clone();
+        let integrate_shader = INTEGRATE_SHADER_HANDLE.clone();
 
         let hash_keys_pipeline = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
             label: Some("hash_keys_pipeline".into()),

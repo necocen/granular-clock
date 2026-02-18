@@ -27,6 +27,8 @@ use bevy::{
 
 use crate::rendering::{InstanceBuffer, InstanceData, ParticleMeshes};
 
+use super::shaders::{PARTICLE_INSTANCING_SHADER_HANDLE, load_rendering_internal_shaders};
+
 /// Marker component for the particle batch proxy entity
 #[derive(Component, Clone)]
 pub struct ParticleBatchMarker;
@@ -174,6 +176,8 @@ pub struct GpuInstancingPlugin;
 
 impl Plugin for GpuInstancingPlugin {
     fn build(&self, app: &mut App) {
+        load_rendering_internal_shaders(app);
+
         app.add_plugins(ExtractComponentPlugin::<ParticleBatchMarker>::default())
             .add_systems(
                 Startup,
@@ -208,13 +212,9 @@ fn spawn_particle_batch(mut commands: Commands, meshes: Res<ParticleMeshes>) {
 }
 
 /// Initialize the instanced particle render pipeline (one-time)
-fn init_particle_render_pipeline(
-    mut commands: Commands,
-    asset_server: Res<AssetServer>,
-    mesh_pipeline: Res<MeshPipeline>,
-) {
+fn init_particle_render_pipeline(mut commands: Commands, mesh_pipeline: Res<MeshPipeline>) {
     commands.insert_resource(ParticleInstancePipeline {
-        shader: asset_server.load("shaders/particle_instancing.wgsl"),
+        shader: PARTICLE_INSTANCING_SHADER_HANDLE.clone(),
         mesh_pipeline: mesh_pipeline.clone(),
     });
 }

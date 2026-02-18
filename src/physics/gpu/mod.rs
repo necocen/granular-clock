@@ -4,6 +4,7 @@ mod node;
 mod pipeline;
 mod plugin;
 mod readback;
+mod shaders;
 #[cfg(test)]
 mod tests;
 
