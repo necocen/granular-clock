@@ -152,6 +152,7 @@ fn init_pipelines(
 fn update_container_params(
     constants: Res<SimulationConstants>,
     sim_state: Res<SimulationState>,
+    mut gpu_data: ResMut<GpuParticleData>,
     mut params: ResMut<ExtractedContainerParams>,
 ) {
     let container_params = &constants.container;
@@ -164,6 +165,17 @@ fn update_container_params(
     params.oscillation_amplitude = osc_params.amplitude;
     params.oscillation_frequency = osc_params.frequency;
     params.oscillation_phase_start = sim_state.oscillation_frame_start_phase;
+
+    // UI で変わる物理パラメータを毎フレーム GpuParticleData 側にも同期する。
+    // これにより reset を待たずに Render World へ反映される。
+    gpu_data.params.divider_height = container_params.divider_height;
+    gpu_data.params.restitution = constants.material.restitution;
+    gpu_data.params.friction = constants.material.friction;
+    gpu_data.params.rolling_friction = constants.material.rolling_friction;
+    gpu_data.params.wall_restitution = constants.wall.restitution;
+    gpu_data.params.wall_friction = constants.wall.friction;
+    gpu_data.params.wall_damping = constants.wall.damping;
+    gpu_data.params.wall_stiffness = constants.wall.stiffness;
 }
 
 /// GPU モード用: CPU と同じ位相更新ロジックで振動を進める。

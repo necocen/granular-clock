@@ -27,10 +27,19 @@ pub struct UiSliderRange {
 pub struct UiControlRanges {
     pub oscillation_amplitude: UiSliderRange,
     pub oscillation_frequency: UiSliderRange,
+    pub divider_height: UiSliderRange,
+    pub particle_restitution: UiSliderRange,
+    pub particle_friction: UiSliderRange,
+    pub wall_restitution: UiSliderRange,
+    pub wall_friction: UiSliderRange,
 }
 
 impl Default for UiControlRanges {
     fn default() -> Self {
+        let container_height = ContainerParams::default().half_extents.y * 2.0;
+        let divider_min = 0.03_f32;
+        let divider_max = (container_height - 0.03).max(divider_min + 0.001);
+
         Self {
             oscillation_amplitude: UiSliderRange {
                 min: 0.001,
@@ -41,6 +50,31 @@ impl Default for UiControlRanges {
                 min: 1.0,
                 max: 20.0,
                 step: 1.0,
+            },
+            divider_height: UiSliderRange {
+                min: divider_min,
+                max: divider_max,
+                step: 0.001,
+            },
+            particle_restitution: UiSliderRange {
+                min: 0.0,
+                max: 1.0,
+                step: 0.01,
+            },
+            particle_friction: UiSliderRange {
+                min: 0.0,
+                max: 2.0,
+                step: 0.01,
+            },
+            wall_restitution: UiSliderRange {
+                min: 0.0,
+                max: 1.0,
+                step: 0.01,
+            },
+            wall_friction: UiSliderRange {
+                min: 0.0,
+                max: 2.0,
+                step: 0.01,
             },
         }
     }

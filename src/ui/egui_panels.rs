@@ -205,6 +205,109 @@ fn draw_control_panel_egui(
             });
 
             full_width_section(ui, |ui| {
+                ui.label(
+                    egui::RichText::new("Container")
+                        .color(COLOR_ACCENT)
+                        .strong(),
+                );
+                ui.add_space(2.0);
+
+                let container_height = (constants.container.half_extents.y * 2.0).max(0.001);
+                let phys_min = 0.0_f32;
+                let phys_max = (container_height - 0.001).max(phys_min + 0.001);
+
+                let mut slider_min = ui_ranges.divider_height.min.max(phys_min);
+                let mut slider_max = ui_ranges.divider_height.max.min(phys_max);
+                let slider_step = ui_ranges.divider_height.step.max(0.0001);
+                if slider_max <= slider_min {
+                    slider_min = phys_min;
+                    slider_max = phys_max;
+                }
+
+                constants.container.divider_height = constants
+                    .container
+                    .divider_height
+                    .clamp(slider_min, slider_max);
+                ui.add(
+                    egui::Slider::new(
+                        &mut constants.container.divider_height,
+                        slider_min..=slider_max,
+                    )
+                    .text("Divider Height [m]")
+                    .step_by(slider_step as f64)
+                    .fixed_decimals(3),
+                );
+            });
+
+            full_width_section(ui, |ui| {
+                ui.label(
+                    egui::RichText::new("Contact Material")
+                        .color(COLOR_ACCENT)
+                        .strong(),
+                );
+                ui.add_space(2.0);
+
+                constants.material.restitution = constants
+                    .material
+                    .restitution
+                    .clamp(
+                        ui_ranges.particle_restitution.min,
+                        ui_ranges.particle_restitution.max,
+                    );
+                ui.add(
+                    egui::Slider::new(
+                        &mut constants.material.restitution,
+                        ui_ranges.particle_restitution.min..=ui_ranges.particle_restitution.max,
+                    )
+                    .text("Particle Restitution")
+                    .step_by(ui_ranges.particle_restitution.step as f64)
+                    .fixed_decimals(2),
+                );
+
+                constants.material.friction = constants
+                    .material
+                    .friction
+                    .clamp(ui_ranges.particle_friction.min, ui_ranges.particle_friction.max);
+                ui.add(
+                    egui::Slider::new(
+                        &mut constants.material.friction,
+                        ui_ranges.particle_friction.min..=ui_ranges.particle_friction.max,
+                    )
+                    .text("Particle Friction")
+                    .step_by(ui_ranges.particle_friction.step as f64)
+                    .fixed_decimals(2),
+                );
+
+                constants.wall.restitution = constants
+                    .wall
+                    .restitution
+                    .clamp(ui_ranges.wall_restitution.min, ui_ranges.wall_restitution.max);
+                ui.add(
+                    egui::Slider::new(
+                        &mut constants.wall.restitution,
+                        ui_ranges.wall_restitution.min..=ui_ranges.wall_restitution.max,
+                    )
+                    .text("Wall Restitution")
+                    .step_by(ui_ranges.wall_restitution.step as f64)
+                    .fixed_decimals(2),
+                );
+
+                constants.wall.friction = constants
+                    .wall
+                    .friction
+                    .clamp(ui_ranges.wall_friction.min, ui_ranges.wall_friction.max);
+                ui.add(
+                    egui::Slider::new(
+                        &mut constants.wall.friction,
+                        ui_ranges.wall_friction.min..=ui_ranges.wall_friction.max,
+                    )
+                    .text("Wall Friction")
+                    .step_by(ui_ranges.wall_friction.step as f64)
+                    .fixed_decimals(2),
+                );
+            });
+
+            full_width_section(ui, |ui| {
                 ui.label(egui::RichText::new("Controls").color(COLOR_ACCENT).strong());
                 let pause_label = if sim_state.paused { "Resume" } else { "Pause" };
                 if ui

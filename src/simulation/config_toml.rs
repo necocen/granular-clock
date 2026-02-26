@@ -120,6 +120,8 @@ type RawContainerMaterial = RawWall;
 #[derive(Debug, Deserialize)]
 struct RawUi {
     oscillation: RawUiOscillation,
+    container: Option<RawUiContainer>,
+    contact: Option<RawUiContact>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -129,6 +131,19 @@ struct RawUiOscillation {
 }
 
 #[derive(Debug, Deserialize)]
+struct RawUiContainer {
+    divider_height: RawUiSliderRange,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawUiContact {
+    particle_restitution: RawUiSliderRange,
+    particle_friction: RawUiSliderRange,
+    wall_restitution: RawUiSliderRange,
+    wall_friction: RawUiSliderRange,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy)]
 struct RawUiSliderRange {
     min: f32,
     max: f32,
@@ -192,6 +207,31 @@ fn convert_raw_config(raw: RawRoot, source_name: &str) -> LoadedConfig {
     let ui_defaults = UiControlRanges::default();
     let mut warnings = Vec::new();
 
+    let container = resolve_container_params(
+        raw.simulation.container.clone(),
+        defaults.container.clone(),
+        source_name,
+        &mut warnings,
+    );
+    let container_height = (container.half_extents.y * 2.0).max(0.001);
+    let dynamic_divider_default = {
+        let min = 0.03_f32;
+        let max = container_height - 0.03;
+        if max > min {
+            UiSliderRange {
+                min,
+                max,
+                step: 0.001,
+            }
+        } else {
+            UiSliderRange {
+                min: 0.0,
+                max: container_height,
+                step: 0.001,
+            }
+        }
+    };
+
     let amplitude_range = sanitize_slider_range(
         raw.ui.oscillation.amplitude,
         ui_defaults.oscillation_amplitude,
@@ -206,10 +246,75 @@ fn convert_raw_config(raw: RawRoot, source_name: &str) -> LoadedConfig {
         "ui.oscillation.frequency",
         &mut warnings,
     );
+    let divider_height_range = raw.ui.container.as_ref().map_or(
+        dynamic_divider_default,
+        |container_ui| {
+            sanitize_slider_range(
+                container_ui.divider_height,
+                dynamic_divider_default,
+                source_name,
+                "ui.container.divider_height",
+                &mut warnings,
+            )
+        },
+    );
+    let particle_restitution_range = raw.ui.contact.as_ref().map_or(
+        ui_defaults.particle_restitution,
+        |contact| {
+            sanitize_slider_range(
+                contact.particle_restitution,
+                ui_defaults.particle_restitution,
+                source_name,
+                "ui.contact.particle_restitution",
+                &mut warnings,
+            )
+        },
+    );
+    let particle_friction_range = raw.ui.contact.as_ref().map_or(
+        ui_defaults.particle_friction,
+        |contact| {
+            sanitize_slider_range(
+                contact.particle_friction,
+                ui_defaults.particle_friction,
+                source_name,
+                "ui.contact.particle_friction",
+                &mut warnings,
+            )
+        },
+    );
+    let wall_restitution_range = raw.ui.contact.as_ref().map_or(
+        ui_defaults.wall_restitution,
+        |contact| {
+            sanitize_slider_range(
+                contact.wall_restitution,
+                ui_defaults.wall_restitution,
+                source_name,
+                "ui.contact.wall_restitution",
+                &mut warnings,
+            )
+        },
+    );
+    let wall_friction_range = raw.ui.contact.as_ref().map_or(
+        ui_defaults.wall_friction,
+        |contact| {
+            sanitize_slider_range(
+                contact.wall_friction,
+                ui_defaults.wall_friction,
+                source_name,
+                "ui.contact.wall_friction",
+                &mut warnings,
+            )
+        },
+    );
 
     let ui_ranges = UiControlRanges {
         oscillation_amplitude: amplitude_range,
         oscillation_frequency: frequency_range,
+        divider_height: divider_height_range,
+        particle_restitution: particle_restitution_range,
+        particle_friction: particle_friction_range,
+        wall_restitution: wall_restitution_range,
+        wall_friction: wall_friction_range,
     };
 
     let particle = SimulationConfig {
@@ -246,12 +351,6 @@ fn convert_raw_config(raw: RawRoot, source_name: &str) -> LoadedConfig {
             |v| v > 0,
         ),
     };
-    let container = resolve_container_params(
-        raw.simulation.container.clone(),
-        defaults.container.clone(),
-        source_name,
-        &mut warnings,
-    );
     let oscillation = OscillationParams {
         amplitude: sanitize_f32(
             raw.simulation.oscillation.amplitude,
@@ -407,6 +506,41 @@ fn convert_raw_config(raw: RawRoot, source_name: &str) -> LoadedConfig {
         ui_ranges.oscillation_frequency,
         source_name,
         "simulation.oscillation.frequency",
+        &mut warnings,
+    );
+    simulation.container.divider_height = clamp_into_range(
+        simulation.container.divider_height,
+        ui_ranges.divider_height,
+        source_name,
+        "simulation.container.divider.height",
+        &mut warnings,
+    );
+    simulation.material.restitution = clamp_into_range(
+        simulation.material.restitution,
+        ui_ranges.particle_restitution,
+        source_name,
+        "simulation.particle.material.restitution",
+        &mut warnings,
+    );
+    simulation.material.friction = clamp_into_range(
+        simulation.material.friction,
+        ui_ranges.particle_friction,
+        source_name,
+        "simulation.particle.material.friction",
+        &mut warnings,
+    );
+    simulation.wall.restitution = clamp_into_range(
+        simulation.wall.restitution,
+        ui_ranges.wall_restitution,
+        source_name,
+        "simulation.container.material.restitution",
+        &mut warnings,
+    );
+    simulation.wall.friction = clamp_into_range(
+        simulation.wall.friction,
+        ui_ranges.wall_friction,
+        source_name,
+        "simulation.container.material.friction",
         &mut warnings,
     );
 
@@ -699,6 +833,31 @@ step = -1.0
 min = 1.0
 max = 10.0
 step = 100.0
+
+[ui.container.divider_height]
+min = 1.0
+max = 0.0
+step = -1.0
+
+[ui.contact.particle_restitution]
+min = 2.0
+max = 1.0
+step = -1.0
+
+[ui.contact.particle_friction]
+min = 0.0
+max = 1.0
+step = 100.0
+
+[ui.contact.wall_restitution]
+min = 0.0
+max = 1.0
+step = 0.01
+
+[ui.contact.wall_friction]
+min = 0.0
+max = 2.0
+step = 0.01
 "#;
 
         let loaded = parse_loaded_config(invalid, "test config").expect("parse invalid config");
@@ -720,6 +879,14 @@ step = 100.0
         assert_eq!(
             loaded.ui_ranges.oscillation_amplitude.min,
             ui_defaults.oscillation_amplitude.min
+        );
+        assert_eq!(
+            loaded.ui_ranges.divider_height.min,
+            ui_defaults.divider_height.min
+        );
+        assert_eq!(
+            loaded.ui_ranges.particle_restitution.min,
+            ui_defaults.particle_restitution.min
         );
         assert!(!loaded.warnings.is_empty());
     }

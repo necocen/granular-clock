@@ -36,7 +36,7 @@ center = [0.0, 0.075, 0.0]
 # Divider height from container floor [m]
 height = 0.10
 # Divider thickness [m]
-thickness = 0.02
+thickness = 0.01
 
 # Particle-wall contact properties.
 [simulation.container.material]
@@ -58,9 +58,18 @@ frequency = 20.0
 # Substep time interval [s]
 dt = 0.0004
 # Number of physics substeps per rendered frame
-substeps_per_frame = 3
+substeps_per_frame = 10
 
-# UI slider ranges for runtime oscillation controls.
+# UI slider ranges for runtime controls.
 [ui.oscillation]
 amplitude = { min = 0.001, max = 0.1, step = 0.001 }
 frequency = { min = 1.0, max = 50.0, step = 1.0 }
+
+[ui.container]
+divider_height = { min = 0.03, max = 0.47, step = 0.001 }
+
+[ui.contact]
+particle_restitution = { min = 0.0, max = 1.0, step = 0.01 }
+particle_friction = { min = 0.0, max = 2.0, step = 0.01 }
+wall_restitution = { min = 0.0, max = 1.0, step = 0.01 }
+wall_friction = { min = 0.0, max = 2.0, step = 0.01 }

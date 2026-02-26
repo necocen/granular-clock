@@ -70,19 +70,23 @@ pub fn setup_rendering(
     });
 
     // 仕切り
-    let divider_mesh = meshes.add(Cuboid::new(
-        container.divider_thickness,
-        container.divider_height,
-        container.half_extents.z * 2.0,
-    ));
+    // 仕切りは unit cube を使い、Transform.scale で実寸を与える。
+    // これにより divider_height を runtime で変更しても見た目高さを即時反映できる。
+    let divider_mesh = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
     let divider = commands
         .spawn((
             Mesh3d(divider_mesh),
             MeshMaterial3d(divider_material),
-            Transform::from_translation(
-                container.base_position - Vec3::Y * container.half_extents.y
+            Transform {
+                translation: container.base_position - Vec3::Y * container.half_extents.y
                     + Vec3::Y * container.divider_height / 2.0,
-            ),
+                scale: Vec3::new(
+                    container.divider_thickness,
+                    container.divider_height,
+                    container.half_extents.z * 2.0,
+                ),
+                ..default()
+            },
         ))
         .id();
 
@@ -202,5 +206,10 @@ pub fn update_container_transforms(
         transform.translation = container.base_position - Vec3::Y * container.half_extents.y
             + Vec3::Y * container.divider_height / 2.0
             + offset;
+        transform.scale = Vec3::new(
+            container.divider_thickness,
+            container.divider_height,
+            container.half_extents.z * 2.0,
+        );
     }
 }
