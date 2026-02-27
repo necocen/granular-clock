@@ -22,9 +22,18 @@ pub struct UiSliderRange {
     pub step: f32,
 }
 
+/// UI 整数スライダーのレンジ定義
+#[derive(Clone, Copy, Debug)]
+pub struct UiIntRange {
+    pub min: u32,
+    pub max: u32,
+    pub step: u32,
+}
+
 /// UI で変更可能な値のレンジ設定
 #[derive(Resource, Clone, Copy, Debug)]
 pub struct UiControlRanges {
+    pub substeps_per_frame: UiIntRange,
     pub oscillation_amplitude: UiSliderRange,
     pub oscillation_frequency: UiSliderRange,
     pub divider_height: UiSliderRange,
@@ -41,6 +50,11 @@ impl Default for UiControlRanges {
         let divider_max = (container_height - 0.03).max(divider_min + 0.001);
 
         Self {
+            substeps_per_frame: UiIntRange {
+                min: 1,
+                max: 20,
+                step: 1,
+            },
             oscillation_amplitude: UiSliderRange {
                 min: 0.001,
                 max: 0.1,

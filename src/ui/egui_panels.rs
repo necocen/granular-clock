@@ -142,7 +142,7 @@ fn draw_control_panel_egui(
 
             full_width_section(ui, |ui| {
                 ui.label(
-                    egui::RichText::new("Physics Backend")
+                    egui::RichText::new("Simulation Mode")
                         .color(COLOR_ACCENT)
                         .strong(),
                 );
@@ -166,6 +166,22 @@ fn draw_control_panel_egui(
                         *backend = selected_backend;
                     }
                 });
+                ui.add_space(6.0);
+                let step_min = ui_ranges.substeps_per_frame.min.max(1);
+                let step_max = ui_ranges.substeps_per_frame.max.max(step_min);
+                let step_step = ui_ranges.substeps_per_frame.step.max(1);
+                constants.settings.substeps_per_frame = constants
+                    .settings
+                    .substeps_per_frame
+                    .clamp(step_min, step_max);
+                ui.add(
+                    egui::Slider::new(
+                        &mut constants.settings.substeps_per_frame,
+                        step_min..=step_max,
+                    )
+                        .step_by(step_step as f64)
+                        .text("Substeps / Frame"),
+                );
             });
 
             full_width_section(ui, |ui| {

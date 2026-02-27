@@ -65,6 +65,9 @@ substeps_per_frame = 10
 amplitude = { min = 0.001, max = 0.1, step = 0.001 }
 frequency = { min = 1.0, max = 50.0, step = 1.0 }
 
+[ui.step]
+substeps_per_frame = { min = 1, max = 20, step = 1 }
+
 [ui.container]
 divider_height = { min = 0.03, max = 0.47, step = 0.001 }
 
