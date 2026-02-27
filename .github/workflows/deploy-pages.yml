@@ -1,0 +1,51 @@
+name: Deploy To Cloudflare Pages
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: deploy-pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    env:
+      CARGO_TERM_COLOR: always
+      CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'granular-clock' }}
+    steps:
+      - uses: Kesin11/actions-timeline@v2
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: deploy-pages
+
+      - name: Install Trunk
+        run: cargo install trunk --locked
+
+      - name: Build Web App
+        run: trunk build --release
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: >-
+            pages deploy dist
+            --project-name=${{ env.CLOUDFLARE_PAGES_PROJECT }}
+            --branch=${{ github.ref_name }}
