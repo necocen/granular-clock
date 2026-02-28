@@ -295,8 +295,38 @@ impl Node for GpuPhysicsNode {
         let workgroups_sort_256 = sort_count.div_ceil(256);
 
         let encoder = render_context.command_encoder();
-        // `copy_buffer_to_buffer` に使う upload buffer の寿命をこの関数末尾まで保持する。
-        let mut param_upload_buffers: Vec<Buffer> = Vec::with_capacity(self.substeps as usize);
+        let params_size = std::mem::size_of::<SimulationParams>() as u64;
+
+        // サブステップごとの params を一括で作成し、upload buffer を 1 本だけ確保する。
+        // （以前の「substep ごとに buffer 作成」を避けて CPU オーバーヘッドを削減）
+        let substep_params = if let (Some(gpu_data), Some(container_params)) = (gpu_data, container_params) {
+            let mut phase = container_params.oscillation_phase_start;
+            let mut params_list = Vec::with_capacity(self.substeps as usize);
+            for _ in 0..self.substeps {
+                let mut runtime_params = gpu_data.params;
+                runtime_params.container_offset = container_params.container_offset;
+                if container_params.oscillation_enabled {
+                    advance_oscillation_phase(
+                        &mut phase,
+                        container_params.oscillation_frequency,
+                        runtime_params.dt,
+                    );
+                    runtime_params.container_offset = container_params.base_position_y
+                        + oscillation_displacement(container_params.oscillation_amplitude, phase);
+                }
+                params_list.push(runtime_params);
+            }
+            Some(params_list)
+        } else {
+            None
+        };
+        let params_upload = substep_params.as_ref().filter(|v| !v.is_empty()).map(|params_list| {
+            render_device.create_buffer_with_data(&BufferInitDescriptor {
+                label: Some("gpu_physics_substep_params_upload"),
+                contents: bytemuck::cast_slice(params_list),
+                usage: BufferUsages::COPY_SRC,
+            })
+        });
 
         let clear_neighbor_and_contact_buffers = |encoder: &mut CommandEncoder| {
             // CPU 実装の clear_forces/build_spatial_grid に合わせて
@@ -395,45 +425,20 @@ impl Node for GpuPhysicsNode {
                 run_integrate(encoder, particles_bind_group, integrate_pipeline);
             };
 
-        let mut substep_phase = container_params.map(|params| params.oscillation_phase_start);
-
         // 1サブステップ:
         // - 前半: hash/sort/cell + collision + integrate_first_half
         // - 後半: hash/sort/cell + collision + integrate_second_half
-        for _ in 0..self.substeps {
+        for substep_idx in 0..self.substeps {
             // plugin::update_params_only がフレーム基準の共通 params を更新し、
             // ここではサブステップ単位の container_offset のみ上書きする。
-            if let (Some(gpu_data), Some(container_params)) = (gpu_data, container_params) {
-                let mut runtime_params = gpu_data.params;
-                // 振動無効時でも現在の当たり判定位置を維持するため、
-                // まずフレーム基準オフセットを反映する。
-                runtime_params.container_offset = container_params.container_offset;
-                let mut phase = substep_phase.unwrap_or(container_params.oscillation_phase_start);
-                if container_params.oscillation_enabled {
-                    advance_oscillation_phase(
-                        &mut phase,
-                        container_params.oscillation_frequency,
-                        runtime_params.dt,
-                    );
-                    runtime_params.container_offset = container_params.base_position_y
-                        + oscillation_displacement(container_params.oscillation_amplitude, phase);
-                }
-                substep_phase = Some(phase);
-                // queue.write_buffer を使うと同一エンコード内での更新境界が曖昧になるため、
-                // サブステップごとに明示的なコピーコマンドを記録する。
-                let upload = render_device.create_buffer_with_data(&BufferInitDescriptor {
-                    label: Some("gpu_physics_substep_params_upload"),
-                    contents: bytemuck::bytes_of(&runtime_params),
-                    usage: BufferUsages::COPY_SRC,
-                });
+            if let Some(upload) = params_upload.as_ref() {
                 encoder.copy_buffer_to_buffer(
-                    &upload,
-                    0,
+                    upload,
+                    substep_idx as u64 * params_size,
                     &buffers.params,
                     0,
-                    std::mem::size_of::<SimulationParams>() as u64,
+                    params_size,
                 );
-                param_upload_buffers.push(upload);
             }
 
             // 前半（A -> B）
