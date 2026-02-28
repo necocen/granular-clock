@@ -179,8 +179,8 @@ fn draw_control_panel_egui(
                         &mut constants.settings.substeps_per_frame,
                         step_min..=step_max,
                     )
-                        .step_by(step_step as f64)
-                        .text("Substeps / Frame"),
+                    .step_by(step_step as f64)
+                    .text("Substeps / Frame"),
                 );
             });
 
@@ -263,13 +263,10 @@ fn draw_control_panel_egui(
                 );
                 ui.add_space(2.0);
 
-                constants.material.restitution = constants
-                    .material
-                    .restitution
-                    .clamp(
-                        ui_ranges.particle_restitution.min,
-                        ui_ranges.particle_restitution.max,
-                    );
+                constants.material.restitution = constants.material.restitution.clamp(
+                    ui_ranges.particle_restitution.min,
+                    ui_ranges.particle_restitution.max,
+                );
                 ui.add(
                     egui::Slider::new(
                         &mut constants.material.restitution,
@@ -280,10 +277,10 @@ fn draw_control_panel_egui(
                     .fixed_decimals(2),
                 );
 
-                constants.material.friction = constants
-                    .material
-                    .friction
-                    .clamp(ui_ranges.particle_friction.min, ui_ranges.particle_friction.max);
+                constants.material.friction = constants.material.friction.clamp(
+                    ui_ranges.particle_friction.min,
+                    ui_ranges.particle_friction.max,
+                );
                 ui.add(
                     egui::Slider::new(
                         &mut constants.material.friction,
@@ -294,10 +291,10 @@ fn draw_control_panel_egui(
                     .fixed_decimals(2),
                 );
 
-                constants.wall.restitution = constants
-                    .wall
-                    .restitution
-                    .clamp(ui_ranges.wall_restitution.min, ui_ranges.wall_restitution.max);
+                constants.wall.restitution = constants.wall.restitution.clamp(
+                    ui_ranges.wall_restitution.min,
+                    ui_ranges.wall_restitution.max,
+                );
                 ui.add(
                     egui::Slider::new(
                         &mut constants.wall.restitution,

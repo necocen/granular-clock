@@ -1,5 +1,5 @@
-use crate::simulation::constants::{advance_oscillation_phase, oscillation_displacement};
 use crate::simulation::constants::PhysicsBackend;
+use crate::simulation::constants::{advance_oscillation_phase, oscillation_displacement};
 use bevy::{
     prelude::*,
     render::{
@@ -316,7 +316,9 @@ impl Node for GpuPhysicsNode {
 
         // サブステップごとの params を一括で作成し、upload buffer を 1 本だけ確保する。
         // （以前の「substep ごとに buffer 作成」を避けて CPU オーバーヘッドを削減）
-        let substep_params = if let (Some(gpu_data), Some(container_params)) = (gpu_data, container_params) {
+        let substep_params = if let (Some(gpu_data), Some(container_params)) =
+            (gpu_data, container_params)
+        {
             let mut phase = container_params.oscillation_phase_start;
             let mut params_list = Vec::with_capacity(self.substeps as usize);
             for _ in 0..self.substeps {
@@ -337,13 +339,16 @@ impl Node for GpuPhysicsNode {
         } else {
             None
         };
-        let params_upload = substep_params.as_ref().filter(|v| !v.is_empty()).map(|params_list| {
-            render_device.create_buffer_with_data(&BufferInitDescriptor {
-                label: Some("gpu_physics_substep_params_upload"),
-                contents: bytemuck::cast_slice(params_list),
-                usage: BufferUsages::COPY_SRC,
-            })
-        });
+        let params_upload = substep_params
+            .as_ref()
+            .filter(|v| !v.is_empty())
+            .map(|params_list| {
+                render_device.create_buffer_with_data(&BufferInitDescriptor {
+                    label: Some("gpu_physics_substep_params_upload"),
+                    contents: bytemuck::cast_slice(params_list),
+                    usage: BufferUsages::COPY_SRC,
+                })
+            });
 
         let clear_neighbor_and_contact_buffers = |encoder: &mut CommandEncoder| {
             // CPU 実装の clear_forces/build_spatial_grid に合わせて

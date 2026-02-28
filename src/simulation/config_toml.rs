@@ -259,66 +259,71 @@ fn convert_raw_config(raw: RawRoot, source_name: &str) -> LoadedConfig {
         "ui.oscillation.frequency",
         &mut warnings,
     );
-    let divider_height_range = raw.ui.container.as_ref().map_or(
-        dynamic_divider_default,
-        |container_ui| {
-            sanitize_slider_range(
-                container_ui.divider_height,
-                dynamic_divider_default,
-                source_name,
-                "ui.container.divider_height",
-                &mut warnings,
-            )
-        },
-    );
-    let particle_restitution_range = raw.ui.contact.as_ref().map_or(
-        ui_defaults.particle_restitution,
-        |contact| {
-            sanitize_slider_range(
-                contact.particle_restitution,
-                ui_defaults.particle_restitution,
-                source_name,
-                "ui.contact.particle_restitution",
-                &mut warnings,
-            )
-        },
-    );
-    let particle_friction_range = raw.ui.contact.as_ref().map_or(
-        ui_defaults.particle_friction,
-        |contact| {
-            sanitize_slider_range(
-                contact.particle_friction,
-                ui_defaults.particle_friction,
-                source_name,
-                "ui.contact.particle_friction",
-                &mut warnings,
-            )
-        },
-    );
-    let wall_restitution_range = raw.ui.contact.as_ref().map_or(
-        ui_defaults.wall_restitution,
-        |contact| {
-            sanitize_slider_range(
-                contact.wall_restitution,
-                ui_defaults.wall_restitution,
-                source_name,
-                "ui.contact.wall_restitution",
-                &mut warnings,
-            )
-        },
-    );
-    let wall_friction_range = raw.ui.contact.as_ref().map_or(
-        ui_defaults.wall_friction,
-        |contact| {
-            sanitize_slider_range(
-                contact.wall_friction,
-                ui_defaults.wall_friction,
-                source_name,
-                "ui.contact.wall_friction",
-                &mut warnings,
-            )
-        },
-    );
+    let divider_height_range =
+        raw.ui
+            .container
+            .as_ref()
+            .map_or(dynamic_divider_default, |container_ui| {
+                sanitize_slider_range(
+                    container_ui.divider_height,
+                    dynamic_divider_default,
+                    source_name,
+                    "ui.container.divider_height",
+                    &mut warnings,
+                )
+            });
+    let particle_restitution_range =
+        raw.ui
+            .contact
+            .as_ref()
+            .map_or(ui_defaults.particle_restitution, |contact| {
+                sanitize_slider_range(
+                    contact.particle_restitution,
+                    ui_defaults.particle_restitution,
+                    source_name,
+                    "ui.contact.particle_restitution",
+                    &mut warnings,
+                )
+            });
+    let particle_friction_range =
+        raw.ui
+            .contact
+            .as_ref()
+            .map_or(ui_defaults.particle_friction, |contact| {
+                sanitize_slider_range(
+                    contact.particle_friction,
+                    ui_defaults.particle_friction,
+                    source_name,
+                    "ui.contact.particle_friction",
+                    &mut warnings,
+                )
+            });
+    let wall_restitution_range =
+        raw.ui
+            .contact
+            .as_ref()
+            .map_or(ui_defaults.wall_restitution, |contact| {
+                sanitize_slider_range(
+                    contact.wall_restitution,
+                    ui_defaults.wall_restitution,
+                    source_name,
+                    "ui.contact.wall_restitution",
+                    &mut warnings,
+                )
+            });
+    let wall_friction_range =
+        raw.ui
+            .contact
+            .as_ref()
+            .map_or(ui_defaults.wall_friction, |contact| {
+                sanitize_slider_range(
+                    contact.wall_friction,
+                    ui_defaults.wall_friction,
+                    source_name,
+                    "ui.contact.wall_friction",
+                    &mut warnings,
+                )
+            });
 
     let ui_ranges = UiControlRanges {
         substeps_per_frame: raw.ui.step.as_ref().map_or(
