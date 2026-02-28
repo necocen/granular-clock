@@ -11,6 +11,7 @@ use bevy::{
 use std::sync::Arc;
 
 use crate::physics::{ParticleSize, ParticleStore};
+use crate::rendering::is_gpu_backend;
 use crate::simulation::{
     constants::{PhysicsBackend, SimulationConstants, advance_oscillation},
     state::SimulationState,
@@ -115,16 +116,17 @@ impl Plugin for GpuPhysicsPlugin {
             return;
         };
 
+        render_app.add_systems(Render, init_pipelines);
         render_app.add_systems(
             Render,
             (
-                init_pipelines,
                 prepare_gpu_buffers,
                 update_params_only,
                 copy_to_staging,
                 process_readback,
             )
-                .chain(),
+                .chain()
+                .run_if(is_gpu_backend),
         );
 
         // レンダーグラフにノードを追加

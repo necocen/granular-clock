@@ -1,4 +1,5 @@
 use crate::simulation::constants::{advance_oscillation_phase, oscillation_displacement};
+use crate::simulation::constants::PhysicsBackend;
 use bevy::{
     prelude::*,
     render::{
@@ -91,6 +92,15 @@ fn build_bitonic_sort_params_payload(sort_count: u32, stride: u32) -> (Vec<u8>, 
 
 impl Node for GpuPhysicsNode {
     fn update(&mut self, world: &mut World) {
+        if world
+            .get_resource::<PhysicsBackend>()
+            .is_some_and(|backend| *backend != PhysicsBackend::Gpu)
+        {
+            // CPU モード中は GPU 物理ノードを停止し、裏で状態が進むのを防ぐ。
+            self.bind_groups = None;
+            return;
+        }
+
         // GpuParticleData からサブステップ数と一時停止状態を取得
         if let Some(gpu_data) = world.get_resource::<GpuParticleData>() {
             self.substeps = gpu_data.substeps;
@@ -235,6 +245,13 @@ impl Node for GpuPhysicsNode {
         render_context: &mut RenderContext<'w>,
         world: &'w World,
     ) -> Result<(), NodeRunError> {
+        if world
+            .get_resource::<PhysicsBackend>()
+            .is_some_and(|backend| *backend != PhysicsBackend::Gpu)
+        {
+            return Ok(());
+        }
+
         let Some(bind_groups) = &self.bind_groups else {
             return Ok(());
         };
