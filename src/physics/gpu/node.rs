@@ -10,7 +10,7 @@ use bevy::{
 use std::num::NonZeroU64;
 
 use super::{
-    buffers::{GpuPhysicsBuffers, SortParamsGpu},
+    buffers::{GpuPhysicsBuffers, SimulationParams, SortParamsGpu},
     pipeline::GpuPhysicsPipelines,
     plugin::{ExtractedContainerParams, GpuParticleData},
 };
@@ -245,7 +245,7 @@ impl Node for GpuPhysicsNode {
             return Ok(());
         };
         let pipeline_cache = world.resource::<PipelineCache>();
-        let render_queue = world.resource::<RenderQueue>();
+        let render_device = world.resource::<RenderDevice>();
         let gpu_data = world.get_resource::<GpuParticleData>();
         let container_params = world.get_resource::<ExtractedContainerParams>();
 
@@ -295,6 +295,8 @@ impl Node for GpuPhysicsNode {
         let workgroups_sort_256 = sort_count.div_ceil(256);
 
         let encoder = render_context.command_encoder();
+        // `copy_buffer_to_buffer` に使う upload buffer の寿命をこの関数末尾まで保持する。
+        let mut param_upload_buffers: Vec<Buffer> = Vec::with_capacity(self.substeps as usize);
 
         let clear_neighbor_and_contact_buffers = |encoder: &mut CommandEncoder| {
             // CPU 実装の clear_forces/build_spatial_grid に合わせて
@@ -417,7 +419,21 @@ impl Node for GpuPhysicsNode {
                         + oscillation_displacement(container_params.oscillation_amplitude, phase);
                 }
                 substep_phase = Some(phase);
-                render_queue.write_buffer(&buffers.params, 0, bytemuck::bytes_of(&runtime_params));
+                // queue.write_buffer を使うと同一エンコード内での更新境界が曖昧になるため、
+                // サブステップごとに明示的なコピーコマンドを記録する。
+                let upload = render_device.create_buffer_with_data(&BufferInitDescriptor {
+                    label: Some("gpu_physics_substep_params_upload"),
+                    contents: bytemuck::bytes_of(&runtime_params),
+                    usage: BufferUsages::COPY_SRC,
+                });
+                encoder.copy_buffer_to_buffer(
+                    &upload,
+                    0,
+                    &buffers.params,
+                    0,
+                    std::mem::size_of::<SimulationParams>() as u64,
+                );
+                param_upload_buffers.push(upload);
             }
 
             // 前半（A -> B）
