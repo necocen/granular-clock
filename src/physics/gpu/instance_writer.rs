@@ -133,6 +133,11 @@ impl Node for GpuInstanceWriteNode {
         if *backend != PhysicsBackend::Gpu {
             return;
         }
+        if world.is_resource_changed::<PhysicsBackend>() {
+            // backend 切替フレームは 1 フレーム遅延（前フレーム描画を維持）
+            self.bind_group = None;
+            return;
+        }
 
         let Some(constants) = world.get_resource::<SimulationConstants>() else {
             return;
@@ -311,11 +316,17 @@ fn init_instance_writer_resources(
 
 fn prepare_gpu_instance_buffer(
     mut commands: Commands,
+    backend: Res<PhysicsBackend>,
     render_device: Res<RenderDevice>,
     constants: Res<SimulationConstants>,
     instance_buffer: Option<ResMut<RenderInstanceBufferResource>>,
     batch_query: Query<Entity, With<ParticleBatchMarker>>,
 ) {
+    // backend 切替フレームは描画更新を 1 フレーム遅延し、見た目の瞬間的な飛びを避ける。
+    if backend.is_changed() {
+        return;
+    }
+
     let particle = &constants.particle;
     let instance_len = particle.num_large + particle.num_small;
 

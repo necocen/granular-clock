@@ -13,6 +13,7 @@ use bevy::{
 use std::sync::{Arc, RwLock, atomic::AtomicBool};
 
 use super::buffers::ParticleGpu;
+use crate::simulation::constants::PhysicsBackend;
 
 /// 読み戻した粒子データを保持する共有リソース（Main World と Render World で共有）
 #[derive(Resource, Clone)]
@@ -92,6 +93,7 @@ use crate::physics::ParticleStore;
 /// Main World で ParticleStore を GPU 結果で更新するシステム
 pub fn apply_gpu_results(
     readback: Option<Res<GpuReadbackBuffer>>,
+    backend: Option<Res<PhysicsBackend>>,
     mut store: ResMut<ParticleStore>,
     mut last_frame: Local<u64>,
     mut debug_counter: Local<u32>,
@@ -105,6 +107,15 @@ pub fn apply_gpu_results(
         let guard = readback.frame.read().unwrap();
         *guard
     };
+
+    // CPU→GPU 切替フレームでは、以前のGPU実行から残っている readback を捨てる。
+    // ここで捨てないと stale な座標で ParticleStore を上書きする場合がある。
+    if let Some(backend) = backend {
+        if *backend == PhysicsBackend::Gpu && backend.is_changed() {
+            *last_frame = current_frame;
+            return;
+        }
+    }
 
     if current_frame == *last_frame || current_frame == 0 {
         return; // 更新なし

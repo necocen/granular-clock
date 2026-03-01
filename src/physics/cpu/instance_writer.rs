@@ -16,6 +16,7 @@ use crate::rendering::{
     RenderInstanceBufferResource, SMALL_PARTICLE_COLOR, is_cpu_backend,
     normalized_instance_capacity,
 };
+use crate::simulation::constants::PhysicsBackend;
 
 pub struct InstanceCpuWriterPlugin;
 
@@ -58,10 +59,16 @@ fn upload_cpu_instances(
     mut commands: Commands,
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
+    backend: Res<PhysicsBackend>,
     cpu_data: Option<Res<CpuInstanceData>>,
     instance_buffer: Option<ResMut<RenderInstanceBufferResource>>,
     batch_query: Query<Entity, With<ParticleBatchMarker>>,
 ) {
+    // backend 切替フレームは描画更新を 1 フレーム遅延し、見た目の瞬間的な飛びを避ける。
+    if backend.is_changed() {
+        return;
+    }
+
     let Some(cpu_data) = cpu_data else {
         return;
     };
