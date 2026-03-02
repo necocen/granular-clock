@@ -1,5 +1,7 @@
 # Granular Clock Simulator
 
+![Demo](./img/demo.gif "Particle distribution changing due to vibration")
+
 A simulator for the granular clock phenomenon [1]. When a mixture of two particle sizes is placed in a box with a low partition and subjected to vibration, the particle distribution on each side of the partition periodically reverses.
 
 This program uses physics simulation to model the particle dynamics and visualizes the results with [Bevy](https://bevyengine.org/).
