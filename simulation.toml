@@ -76,7 +76,7 @@ target = [0.0, 0.2, 0.0]
 [ui.light]
 ambient_brightness = 500.0
 directional_illuminance = 10000.0
-directional_position = [1.0, 2.0, 1.0]
+directional_position = [0.0, 2.0, 0.0]
 directional_target = [0.0, 0.0, 0.0]
 shadows_enabled = true
 
