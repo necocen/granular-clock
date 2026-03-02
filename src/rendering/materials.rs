@@ -36,6 +36,8 @@ pub fn setup_rendering(
     let wall_material = materials.add(StandardMaterial {
         base_color: Color::srgba(0.5, 0.5, 0.5, 0.05),
         alpha_mode: AlphaMode::Blend,
+        // 方向ライトが真上でも側壁が消えないように、壁は非照明で表示する。
+        unlit: true,
         ..default()
     });
 
