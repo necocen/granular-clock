@@ -45,7 +45,7 @@ fn run_with_config_path(config_path: Option<PathBuf>) {
 
     let primary_window = Window {
         title: "Granular Clock".into(),
-        resolution: (1280u32, 960u32).into(),
+        resolution: (1440u32, 960u32).into(),
         #[cfg(target_family = "wasm")]
         fit_canvas_to_parent: true,
         ..default()
