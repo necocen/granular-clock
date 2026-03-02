@@ -24,6 +24,13 @@ const COLOR_GPU: egui::Color32 = egui::Color32::from_rgb(106, 185, 255);
 const COLOR_CPU: egui::Color32 = egui::Color32::from_rgb(255, 176, 96);
 const COLOR_ACCENT: egui::Color32 = egui::Color32::from_rgb(128, 210, 255);
 const COLOR_RESET: egui::Color32 = egui::Color32::from_rgb(178, 72, 72);
+const PERF_SMOOTHING_TAU_SEC: f32 = 0.6;
+
+#[derive(Resource, Default)]
+struct PerfDisplayState {
+    smoothed_fps: Option<f32>,
+    smoothed_steps_per_sec: Option<f32>,
+}
 
 fn section_frame() -> egui::Frame {
     egui::Frame {
@@ -71,6 +78,7 @@ impl Plugin for UiPlugin {
             auto_create_primary_context: false,
             ..default()
         })
+        .insert_resource(PerfDisplayState::default())
         .add_plugins(EguiPlugin::default())
         .add_systems(
             EguiPrimaryContextPass,
@@ -87,6 +95,7 @@ impl Plugin for UiPlugin {
 fn draw_control_panel_egui(
     mut contexts: EguiContexts,
     time: Res<Time>,
+    mut perf_display: ResMut<PerfDisplayState>,
     mut constants: ResMut<SimulationConstants>,
     ui_ranges: Res<UiControlRanges>,
     mut backend: ResMut<PhysicsBackend>,
@@ -117,17 +126,39 @@ fn draw_control_panel_egui(
                             .strong(),
                     );
                     let dt = time.delta_secs();
-                    if dt > 0.0 {
-                        let fps = 1.0 / dt;
-                        let sim_steps = fps * constants.settings.substeps_per_frame as f32;
+                    if dt > 0.0 && dt.is_finite() {
+                        let fps_instant = 1.0 / dt;
+                        let steps_instant = fps_instant * constants.settings.substeps_per_frame as f32;
+                        let alpha = 1.0 - (-dt / PERF_SMOOTHING_TAU_SEC).exp();
+
+                        let smoothed_fps = match perf_display.smoothed_fps {
+                            Some(prev) => prev + (fps_instant - prev) * alpha,
+                            None => fps_instant,
+                        };
+                        let smoothed_steps = match perf_display.smoothed_steps_per_sec {
+                            Some(prev) => prev + (steps_instant - prev) * alpha,
+                            None => steps_instant,
+                        };
+
+                        perf_display.smoothed_fps = Some(smoothed_fps);
+                        perf_display.smoothed_steps_per_sec = Some(smoothed_steps);
+
+                        let fps_text = format!("{:>3.0}", smoothed_fps);
+                        let steps_text = format!("{:>4.0}", smoothed_steps);
                         ui.label(
-                            egui::RichText::new(format!("{fps:.0} FPS  |  {sim_steps:.0} steps/s"))
-                                .color(egui::Color32::from_gray(190)),
+                            egui::RichText::new(format!(
+                                "{fps_text} FPS  |  {steps_text} steps/s"
+                            ))
+                            .color(egui::Color32::from_gray(190))
+                            .monospace(),
                         );
                     } else {
                         ui.label(
-                            egui::RichText::new("FPS: --  |  steps/s: --")
-                                .color(egui::Color32::from_gray(160)),
+                            egui::RichText::new(
+                                format!("{:>3} FPS  |  {:>4} steps/s", "--", "--"),
+                            )
+                            .color(egui::Color32::from_gray(160))
+                            .monospace(),
                         );
                     }
                 });
