@@ -7,34 +7,34 @@ gravity = [0.0, -9.80665, 0.0]
 [simulation.particle]
 # Particle radius [m]
 large_radius = 0.01
-small_radius = 0.006
+small_radius = 0.005
 # Number of particles by type
-num_large = 250
-num_small = 1500
+num_large = 160
+num_small = 1440
 
 # Particle-particle contact material properties.
 [simulation.particle.material]
 # Density [kg/m^3]
-density = 5000.0
+density = 2000.0
 # Elastic model parameters
 youngs_modulus = 1.0e7
 poisson_ratio = 0.25
 # Collision/friction parameters
-restitution = 0.6
+restitution = 0.9
 friction = 0.3
 rolling_friction = 0.1
 
 # Container box dimensions.
 [simulation.container.box]
 # Full box size [m] (not half extents)
-size = [0.4, 0.5, 0.2]
+size = [0.4, 0.7, 0.1]
 # Box center position in world coordinates [m]
-center = [0.0, 0.075, 0.0]
+center = [0.0, -0.05, 0.0]
 
 # Divider geometry inside the container.
 [simulation.container.divider]
 # Divider height from container floor [m]
-height = 0.10
+height = 0.17
 # Divider thickness [m]
 thickness = 0.01
 
@@ -44,14 +44,14 @@ thickness = 0.01
 stiffness = 10000.0
 damping = 20.0
 # Wall friction and restitution
-friction = 0.6
-restitution = 0.5
+restitution = 0.7
+friction = 0.3
 
 # Vertical sinusoidal oscillation of the container.
 [simulation.oscillation]
 # Amplitude [m], frequency [Hz]
-amplitude = 0.013
-frequency = 20.0
+amplitude = 0.037
+frequency = 33.0
 
 # Integration step settings.
 [simulation.step]
