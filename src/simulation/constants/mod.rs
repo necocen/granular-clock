@@ -1,12 +1,14 @@
 use bevy::prelude::*;
 
 pub mod config;
+pub mod camera;
 pub mod container;
 pub mod oscillation;
 pub mod physics;
 pub mod time;
 
 pub use config::SimulationConfig;
+pub use camera::{CameraSettings, LightSettings};
 pub use container::ContainerParams;
 pub use oscillation::{
     OscillationParams, advance_oscillation, advance_oscillation_phase, oscillation_displacement,

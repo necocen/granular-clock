@@ -81,6 +81,8 @@ fn run_with_config_path(config_path: Option<PathBuf>) {
         // リソース
         .insert_resource(loaded.simulation)
         .insert_resource(loaded.ui_ranges)
+        .insert_resource(loaded.camera)
+        .insert_resource(loaded.light)
         .insert_resource(PhysicsBackend::default())
         .insert_resource(ContactHistory::default())
         .insert_resource(DistributionHistory::default())

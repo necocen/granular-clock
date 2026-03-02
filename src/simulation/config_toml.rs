@@ -5,9 +5,10 @@ use bevy::prelude::*;
 use serde::Deserialize;
 
 use crate::simulation::constants::{
-    ContainerParams, MaterialProperties, OscillationParams, PhysicsConstants, SimulationConfig,
-    SimulationConstants, SimulationSettings, SimulationTimeParams, UiControlRanges, UiIntRange,
-    UiSliderRange, WallProperties,
+    CameraSettings, ContainerParams, LightSettings, MaterialProperties, OscillationParams,
+    PhysicsConstants, SimulationConfig, SimulationConstants, SimulationSettings,
+    SimulationTimeParams,
+    UiControlRanges, UiIntRange, UiSliderRange, WallProperties,
 };
 
 const EMBEDDED_CONFIG_TOML: &str = include_str!("../../simulation.toml");
@@ -16,6 +17,8 @@ const EMBEDDED_CONFIG_TOML: &str = include_str!("../../simulation.toml");
 pub struct LoadedConfig {
     pub simulation: SimulationConstants,
     pub ui_ranges: UiControlRanges,
+    pub camera: CameraSettings,
+    pub light: LightSettings,
     pub warnings: Vec<String>,
 }
 
@@ -76,7 +79,6 @@ struct RawContainer {
 #[derive(Debug, Deserialize, Clone)]
 struct RawContainerBox {
     size: [f32; 3],
-    center: [f32; 3],
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -122,6 +124,8 @@ struct RawUi {
     step: Option<RawUiStep>,
     oscillation: RawUiOscillation,
     container: Option<RawUiContainer>,
+    camera: Option<RawUiCamera>,
+    light: Option<RawUiLight>,
     contact: Option<RawUiContact>,
 }
 
@@ -139,6 +143,21 @@ struct RawUiOscillation {
 #[derive(Debug, Deserialize)]
 struct RawUiContainer {
     divider_height: RawUiSliderRange,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawUiCamera {
+    position: [f32; 3],
+    target: [f32; 3],
+}
+
+#[derive(Debug, Deserialize)]
+struct RawUiLight {
+    ambient_brightness: Option<f32>,
+    directional_illuminance: Option<f32>,
+    directional_position: Option<[f32; 3]>,
+    directional_target: Option<[f32; 3]>,
+    shadows_enabled: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -169,6 +188,8 @@ pub fn load_embedded_config() -> LoadedConfig {
         Err(err) => LoadedConfig {
             simulation: SimulationConstants::default(),
             ui_ranges: UiControlRanges::default(),
+            camera: CameraSettings::default(),
+            light: LightSettings::default(),
             warnings: vec![format!(
                 "Failed to parse embedded config: {err}. Falling back to Rust defaults."
             )],
@@ -218,6 +239,8 @@ fn parse_loaded_config(source: &str, source_name: &str) -> Result<LoadedConfig, 
 fn convert_raw_config(raw: RawRoot, source_name: &str) -> LoadedConfig {
     let defaults = SimulationConstants::default();
     let ui_defaults = UiControlRanges::default();
+    let camera_defaults = CameraSettings::default();
+    let light_defaults = LightSettings::default();
     let mut warnings = Vec::new();
 
     let container = resolve_container_params(
@@ -346,6 +369,72 @@ fn convert_raw_config(raw: RawRoot, source_name: &str) -> LoadedConfig {
         wall_restitution: wall_restitution_range,
         wall_friction: wall_friction_range,
     };
+
+    let camera = raw.ui.camera.as_ref().map_or(camera_defaults, |camera_ui| {
+        CameraSettings {
+            position: sanitize_vec3(
+                camera_ui.position,
+                camera_defaults.position,
+                source_name,
+                "ui.camera.position",
+                &mut warnings,
+            ),
+            target: sanitize_vec3(
+                camera_ui.target,
+                camera_defaults.target,
+                source_name,
+                "ui.camera.target",
+                &mut warnings,
+            ),
+        }
+    });
+    let light = raw.ui.light.as_ref().map_or(light_defaults, |light_ui| {
+        LightSettings {
+            ambient_brightness: sanitize_f32(
+                light_ui.ambient_brightness.unwrap_or(light_defaults.ambient_brightness),
+                light_defaults.ambient_brightness,
+                source_name,
+                "ui.light.ambient_brightness",
+                &mut warnings,
+                |v| v >= 0.0,
+            ),
+            directional_illuminance: sanitize_f32(
+                light_ui
+                    .directional_illuminance
+                    .unwrap_or(light_defaults.directional_illuminance),
+                light_defaults.directional_illuminance,
+                source_name,
+                "ui.light.directional_illuminance",
+                &mut warnings,
+                |v| v >= 0.0,
+            ),
+            directional_position: light_ui
+                .directional_position
+                .map_or(light_defaults.directional_position, |v| {
+                    sanitize_vec3(
+                        v,
+                        light_defaults.directional_position,
+                        source_name,
+                        "ui.light.directional_position",
+                        &mut warnings,
+                    )
+                }),
+            directional_target: light_ui
+                .directional_target
+                .map_or(light_defaults.directional_target, |v| {
+                    sanitize_vec3(
+                        v,
+                        light_defaults.directional_target,
+                        source_name,
+                        "ui.light.directional_target",
+                        &mut warnings,
+                    )
+                }),
+            shadows_enabled: light_ui
+                .shadows_enabled
+                .unwrap_or(light_defaults.shadows_enabled),
+        }
+    });
 
     let particle = SimulationConfig {
         large_radius: sanitize_f32(
@@ -584,6 +673,8 @@ fn convert_raw_config(raw: RawRoot, source_name: &str) -> LoadedConfig {
     LoadedConfig {
         simulation,
         ui_ranges,
+        camera,
+        light,
         warnings,
     }
 }
@@ -602,13 +693,6 @@ fn resolve_container_params(
         warnings,
     );
     let half_extents = full_size * 0.5;
-    let base_position = sanitize_vec3(
-        raw.r#box.center,
-        default.base_position,
-        source_name,
-        "simulation.container.box.center",
-        warnings,
-    );
     let divider_height = sanitize_f32(
         raw.divider.height,
         default.divider_height,
@@ -630,7 +714,7 @@ fn resolve_container_params(
         half_extents,
         divider_height,
         divider_thickness,
-        base_position,
+        base_position: Vec3::ZERO,
     }
 }
 
@@ -910,7 +994,6 @@ rolling_friction = -1.0
 
 [simulation.container.box]
 size = [0.2, -1.0, 0.1]
-center = [0.0, 0.075, 0.0]
 
 [simulation.container.divider]
 height = -0.1

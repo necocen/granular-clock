@@ -3,6 +3,8 @@ use bevy::render::view::NoIndirectDrawing;
 use bevy_egui::PrimaryEguiContext;
 use bevy_panorbit_camera::{PanOrbitCamera, PanOrbitCameraPlugin};
 
+use crate::simulation::constants::{CameraSettings, LightSettings};
+
 /// メインカメラのマーカー
 #[derive(Component)]
 pub struct MainCamera;
@@ -13,31 +15,36 @@ pub fn camera_plugin() -> PanOrbitCameraPlugin {
 }
 
 /// カメラをセットアップ
-pub fn setup_camera(mut commands: Commands) {
+pub fn setup_camera(
+    mut commands: Commands,
+    camera: Res<CameraSettings>,
+    light: Res<LightSettings>,
+) {
     commands.spawn((
         MainCamera,
         Camera3d::default(),
         // Attach Egui explicitly to avoid relying on auto-created primary context selection.
         PrimaryEguiContext,
         PanOrbitCamera::default(),
-        Transform::from_xyz(0.65, 0.5, 0.65).looking_at(Vec3::new(0.0, 0.075, 0.0), Vec3::Y),
+        Transform::from_translation(camera.position).looking_at(camera.target, Vec3::Y),
         NoIndirectDrawing,
     ));
 
     // 環境光
     commands.spawn(AmbientLight {
         color: Color::WHITE,
-        brightness: 500.0,
+        brightness: light.ambient_brightness,
         affects_lightmapped_meshes: true,
     });
 
     // ディレクショナルライト
     commands.spawn((
         DirectionalLight {
-            illuminance: 10000.0,
-            shadows_enabled: true,
+            illuminance: light.directional_illuminance,
+            shadows_enabled: light.shadows_enabled,
             ..default()
         },
-        Transform::from_xyz(1.0, 2.0, 1.0).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::from_translation(light.directional_position)
+            .looking_at(light.directional_target, Vec3::Y),
     ));
 }

@@ -28,8 +28,6 @@ rolling_friction = 0.1
 [simulation.container.box]
 # Full box size [m] (not half extents)
 size = [0.4, 0.7, 0.1]
-# Box center position in world coordinates [m]
-center = [0.0, -0.05, 0.0]
 
 # Divider geometry inside the container.
 [simulation.container.divider]
@@ -70,6 +68,17 @@ substeps_per_frame = { min = 1, max = 20, step = 1 }
 
 [ui.container]
 divider_height = { min = 0.03, max = 0.47, step = 0.001 }
+
+[ui.camera]
+position = [0.25, 0.3, 0.85]
+target = [0.0, 0.2, 0.0]
+
+[ui.light]
+ambient_brightness = 500.0
+directional_illuminance = 10000.0
+directional_position = [1.0, 2.0, 1.0]
+directional_target = [0.0, 0.0, 0.0]
+shadows_enabled = true
 
 [ui.contact]
 particle_restitution = { min = 0.0, max = 1.0, step = 0.01 }
