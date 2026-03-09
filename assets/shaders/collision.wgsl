@@ -387,7 +387,7 @@ fn collision_response(@builtin(global_invocation_id) gid: vec3<u32>) {
     total_torque += wall.torque;
 
     // 非有限値ガード（isFinite の実装差を避けるため NaN/巨大値で判定）
-    let invalid_force = any(total_force != total_force) || any(abs(total_force) > vec3<f32>(1e30));
+    let invalid_force = any(total_force != total_force) || any(abs(total_force) > vec3<f32>(1e10));
     if (invalid_force) {
         forces[id] = vec4<f32>(0.0);
     } else {
@@ -395,7 +395,7 @@ fn collision_response(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let invalid_torque =
-        any(total_torque != total_torque) || any(abs(total_torque) > vec3<f32>(1e30));
+        any(total_torque != total_torque) || any(abs(total_torque) > vec3<f32>(1e10));
     if (invalid_torque) {
         torques[id] = vec4<f32>(0.0);
     } else {
