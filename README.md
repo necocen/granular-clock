@@ -7,7 +7,7 @@ A simulator for the granular clock phenomenon [1]. When a mixture of two particl
 This program uses physics simulation to model the particle dynamics and visualizes the results with [Bevy](https://bevyengine.org/).
 
 **Live demo (runs in your browser):** https://granular.necocen.info/  
-**Supported browsers:** Chrome and Firefox with WebGPU support (Safari is not currently supported)
+**Supported browsers:** Chrome, Firefox, and Safari with WebGPU support
 
 ## Getting Started
 
