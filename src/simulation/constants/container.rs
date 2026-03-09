@@ -16,10 +16,10 @@ pub struct ContainerParams {
 impl Default for ContainerParams {
     fn default() -> Self {
         Self {
-            half_extents: Vec3::new(0.2, 0.25, 0.1),   // 40x50x20 cm
-            divider_height: 0.10,                      // 10 cm
-            divider_thickness: 0.02,                   // 2 cm
-            base_position: Vec3::ZERO,                 // 中心は原点固定
+            half_extents: Vec3::new(0.2, 0.25, 0.1), // 40x50x20 cm
+            divider_height: 0.10,                    // 10 cm
+            divider_thickness: 0.02,                 // 2 cm
+            base_position: Vec3::ZERO,               // 中心は原点固定
         }
     }
 }

@@ -128,7 +128,8 @@ fn draw_control_panel_egui(
                     let dt = time.delta_secs();
                     if dt > 0.0 && dt.is_finite() {
                         let fps_instant = 1.0 / dt;
-                        let steps_instant = fps_instant * constants.settings.substeps_per_frame as f32;
+                        let steps_instant =
+                            fps_instant * constants.settings.substeps_per_frame as f32;
                         let alpha = 1.0 - (-dt / PERF_SMOOTHING_TAU_SEC).exp();
 
                         let smoothed_fps = match perf_display.smoothed_fps {
@@ -146,19 +147,15 @@ fn draw_control_panel_egui(
                         let fps_text = format!("{:>3.0}", smoothed_fps);
                         let steps_text = format!("{:>4.0}", smoothed_steps);
                         ui.label(
-                            egui::RichText::new(format!(
-                                "{fps_text} FPS  |  {steps_text} steps/s"
-                            ))
-                            .color(egui::Color32::from_gray(190))
-                            .monospace(),
+                            egui::RichText::new(format!("{fps_text} FPS  |  {steps_text} steps/s"))
+                                .color(egui::Color32::from_gray(190))
+                                .monospace(),
                         );
                     } else {
                         ui.label(
-                            egui::RichText::new(
-                                format!("{:>3} FPS  |  {:>4} steps/s", "--", "--"),
-                            )
-                            .color(egui::Color32::from_gray(160))
-                            .monospace(),
+                            egui::RichText::new(format!("{:>3} FPS  |  {:>4} steps/s", "--", "--"))
+                                .color(egui::Color32::from_gray(160))
+                                .monospace(),
                         );
                     }
                 });

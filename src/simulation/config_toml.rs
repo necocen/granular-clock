@@ -7,8 +7,7 @@ use serde::Deserialize;
 use crate::simulation::constants::{
     CameraSettings, ContainerParams, LightSettings, MaterialProperties, OscillationParams,
     PhysicsConstants, SimulationConfig, SimulationConstants, SimulationSettings,
-    SimulationTimeParams,
-    UiControlRanges, UiIntRange, UiSliderRange, WallProperties,
+    SimulationTimeParams, UiControlRanges, UiIntRange, UiSliderRange, WallProperties,
 };
 
 const EMBEDDED_CONFIG_TOML: &str = include_str!("../../simulation.toml");
@@ -370,8 +369,11 @@ fn convert_raw_config(raw: RawRoot, source_name: &str) -> LoadedConfig {
         wall_friction: wall_friction_range,
     };
 
-    let camera = raw.ui.camera.as_ref().map_or(camera_defaults, |camera_ui| {
-        CameraSettings {
+    let camera = raw
+        .ui
+        .camera
+        .as_ref()
+        .map_or(camera_defaults, |camera_ui| CameraSettings {
             position: sanitize_vec3(
                 camera_ui.position,
                 camera_defaults.position,
@@ -386,12 +388,16 @@ fn convert_raw_config(raw: RawRoot, source_name: &str) -> LoadedConfig {
                 "ui.camera.target",
                 &mut warnings,
             ),
-        }
-    });
-    let light = raw.ui.light.as_ref().map_or(light_defaults, |light_ui| {
-        LightSettings {
+        });
+    let light = raw
+        .ui
+        .light
+        .as_ref()
+        .map_or(light_defaults, |light_ui| LightSettings {
             ambient_brightness: sanitize_f32(
-                light_ui.ambient_brightness.unwrap_or(light_defaults.ambient_brightness),
+                light_ui
+                    .ambient_brightness
+                    .unwrap_or(light_defaults.ambient_brightness),
                 light_defaults.ambient_brightness,
                 source_name,
                 "ui.light.ambient_brightness",
@@ -408,9 +414,9 @@ fn convert_raw_config(raw: RawRoot, source_name: &str) -> LoadedConfig {
                 &mut warnings,
                 |v| v >= 0.0,
             ),
-            directional_position: light_ui
-                .directional_position
-                .map_or(light_defaults.directional_position, |v| {
+            directional_position: light_ui.directional_position.map_or(
+                light_defaults.directional_position,
+                |v| {
                     sanitize_vec3(
                         v,
                         light_defaults.directional_position,
@@ -418,10 +424,11 @@ fn convert_raw_config(raw: RawRoot, source_name: &str) -> LoadedConfig {
                         "ui.light.directional_position",
                         &mut warnings,
                     )
-                }),
-            directional_target: light_ui
-                .directional_target
-                .map_or(light_defaults.directional_target, |v| {
+                },
+            ),
+            directional_target: light_ui.directional_target.map_or(
+                light_defaults.directional_target,
+                |v| {
                     sanitize_vec3(
                         v,
                         light_defaults.directional_target,
@@ -429,12 +436,12 @@ fn convert_raw_config(raw: RawRoot, source_name: &str) -> LoadedConfig {
                         "ui.light.directional_target",
                         &mut warnings,
                     )
-                }),
+                },
+            ),
             shadows_enabled: light_ui
                 .shadows_enabled
                 .unwrap_or(light_defaults.shadows_enabled),
-        }
-    });
+        });
 
     let particle = SimulationConfig {
         large_radius: sanitize_f32(
