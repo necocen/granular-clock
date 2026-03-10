@@ -16,6 +16,12 @@ use crate::simulation::{
 
 const CONTROL_WINDOW_WIDTH: f32 = 360.0;
 const DISTRIBUTION_WINDOW_WIDTH: f32 = 440.0;
+const MOBILE_BREAKPOINT_WIDTH: f32 = 820.0;
+const MOBILE_BREAKPOINT_HEIGHT: f32 = 700.0;
+const MOBILE_CONTROL_WINDOW_MAX_WIDTH: f32 = 300.0;
+const MOBILE_DISTRIBUTION_WINDOW_MAX_WIDTH: f32 = 320.0;
+const MOBILE_PLOT_HEIGHT: f32 = 120.0;
+const DESKTOP_PLOT_HEIGHT: f32 = 150.0;
 
 const COLOR_PANEL_BG: egui::Color32 = egui::Color32::from_rgb(18, 22, 30);
 const COLOR_PANEL_BORDER: egui::Color32 = egui::Color32::from_rgb(60, 68, 84);
@@ -30,6 +36,74 @@ const PERF_SMOOTHING_TAU_SEC: f32 = 0.6;
 struct PerfDisplayState {
     smoothed_fps: Option<f32>,
     smoothed_steps_per_sec: Option<f32>,
+}
+
+#[derive(Clone, Copy)]
+struct UiLayoutProfile {
+    mobile: bool,
+    control_width: f32,
+    distribution_width: f32,
+    plot_height: f32,
+    item_spacing: egui::Vec2,
+    control_offset: egui::Vec2,
+    distribution_offset: egui::Vec2,
+    button_height: f32,
+    panel_margin: i8,
+}
+
+fn ui_layout_profile(ctx: &egui::Context) -> UiLayoutProfile {
+    let viewport = ctx.content_rect();
+    let width = viewport.width();
+    let height = viewport.height();
+    let mobile = width <= MOBILE_BREAKPOINT_WIDTH
+        || height <= MOBILE_BREAKPOINT_HEIGHT
+        || (width < 960.0 && height > width);
+
+    if mobile {
+        UiLayoutProfile {
+            mobile: true,
+            control_width: (width - 20.0)
+                .min(MOBILE_CONTROL_WINDOW_MAX_WIDTH)
+                .max(220.0),
+            distribution_width: (width - 20.0)
+                .min(MOBILE_DISTRIBUTION_WINDOW_MAX_WIDTH)
+                .max(240.0),
+            plot_height: MOBILE_PLOT_HEIGHT,
+            item_spacing: egui::vec2(6.0, 6.0),
+            control_offset: egui::vec2(-8.0, 8.0),
+            distribution_offset: egui::vec2(8.0, -8.0),
+            button_height: 24.0,
+            panel_margin: 8,
+        }
+    } else {
+        UiLayoutProfile {
+            mobile: false,
+            control_width: CONTROL_WINDOW_WIDTH,
+            distribution_width: DISTRIBUTION_WINDOW_WIDTH,
+            plot_height: DESKTOP_PLOT_HEIGHT,
+            item_spacing: egui::vec2(8.0, 8.0),
+            control_offset: egui::vec2(-10.0, 10.0),
+            distribution_offset: egui::vec2(10.0, 10.0),
+            button_height: 28.0,
+            panel_margin: 12,
+        }
+    }
+}
+
+fn settings_section(
+    ui: &mut egui::Ui,
+    title: &str,
+    default_open: bool,
+    add_contents: impl FnOnce(&mut egui::Ui),
+) {
+    full_width_section(ui, |ui| {
+        egui::CollapsingHeader::new(egui::RichText::new(title).color(COLOR_ACCENT).strong())
+            .default_open(default_open)
+            .show(ui, |ui| {
+                ui.add_space(2.0);
+                add_contents(ui);
+            });
+    });
 }
 
 fn section_frame() -> egui::Frame {
@@ -102,22 +176,25 @@ fn draw_control_panel_egui(
     mut sim_state: ResMut<SimulationState>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
+    let layout = ui_layout_profile(ctx);
 
     egui::Window::new(egui::RichText::new("Simulation Settings").strong())
-        .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 10.0))
-        .default_width(CONTROL_WINDOW_WIDTH)
-        .collapsible(false)
+        .anchor(egui::Align2::RIGHT_TOP, layout.control_offset)
+        .default_width(layout.control_width)
+        .min_width(layout.control_width)
+        .max_width(layout.control_width)
+        .collapsible(true)
+        .default_open(!layout.mobile)
         .resizable(false)
         .frame(egui::Frame {
             fill: COLOR_PANEL_BG,
             stroke: egui::Stroke::new(1.0, COLOR_PANEL_BORDER),
             corner_radius: egui::CornerRadius::same(10),
-            inner_margin: egui::Margin::same(12),
+            inner_margin: egui::Margin::same(layout.panel_margin),
             ..Default::default()
         })
         .show(ctx, |ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
-
+            ui.spacing_mut().item_spacing = layout.item_spacing;
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
                     ui.label(
@@ -168,17 +245,9 @@ fn draw_control_panel_egui(
                 });
             });
 
-            full_width_section(ui, |ui| {
-                ui.label(
-                    egui::RichText::new("Simulation Mode")
-                        .color(COLOR_ACCENT)
-                        .strong(),
-                );
-                ui.add_space(2.0);
+            settings_section(ui, "Simulation Mode", true, |ui| {
                 ui.horizontal(|ui| {
                     ui.label("Physics:");
-                    // Avoid marking PhysicsBackend changed every frame.
-                    // (GPU path uses backend.is_changed() to detect actual backend switches.)
                     let mut selected_backend = *backend;
                     ui.radio_value(
                         &mut selected_backend,
@@ -212,13 +281,7 @@ fn draw_control_panel_egui(
                 );
             });
 
-            full_width_section(ui, |ui| {
-                ui.label(
-                    egui::RichText::new("Oscillation")
-                        .color(COLOR_ACCENT)
-                        .strong(),
-                );
-                ui.add_space(2.0);
+            settings_section(ui, "Oscillation", false, |ui| {
                 ui.checkbox(&mut constants.oscillation.enabled, "Enabled");
                 constants.oscillation.amplitude = constants.oscillation.amplitude.clamp(
                     ui_ranges.oscillation_amplitude.min,
@@ -248,14 +311,7 @@ fn draw_control_panel_egui(
                 );
             });
 
-            full_width_section(ui, |ui| {
-                ui.label(
-                    egui::RichText::new("Container")
-                        .color(COLOR_ACCENT)
-                        .strong(),
-                );
-                ui.add_space(2.0);
-
+            settings_section(ui, "Container", false, |ui| {
                 let container_height = (constants.container.half_extents.y * 2.0).max(0.001);
                 let phys_min = 0.0_f32;
                 let phys_max = (container_height - 0.001).max(phys_min + 0.001);
@@ -283,14 +339,7 @@ fn draw_control_panel_egui(
                 );
             });
 
-            full_width_section(ui, |ui| {
-                ui.label(
-                    egui::RichText::new("Contact Material")
-                        .color(COLOR_ACCENT)
-                        .strong(),
-                );
-                ui.add_space(2.0);
-
+            settings_section(ui, "Contact Material", false, |ui| {
                 constants.material.restitution = constants.material.restitution.clamp(
                     ui_ranges.particle_restitution.min,
                     ui_ranges.particle_restitution.max,
@@ -348,12 +397,11 @@ fn draw_control_panel_egui(
                 );
             });
 
-            full_width_section(ui, |ui| {
-                ui.label(egui::RichText::new("Controls").color(COLOR_ACCENT).strong());
+            settings_section(ui, "Controls", true, |ui| {
                 let pause_label = if sim_state.paused { "Resume" } else { "Pause" };
                 if ui
                     .add_sized(
-                        [ui.available_width(), 28.0],
+                        [ui.available_width(), layout.button_height],
                         egui::Button::new(egui::RichText::new(pause_label).strong())
                             .fill(egui::Color32::from_rgb(62, 86, 145)),
                     )
@@ -364,7 +412,7 @@ fn draw_control_panel_egui(
 
                 if ui
                     .add_sized(
-                        [ui.available_width(), 28.0],
+                        [ui.available_width(), layout.button_height],
                         egui::Button::new(egui::RichText::new("Reset").strong()).fill(COLOR_RESET),
                     )
                     .clicked()
@@ -389,6 +437,7 @@ fn draw_distribution_panel_egui(
     history: Res<DistributionHistory>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
+    let layout = ui_layout_profile(ctx);
 
     let large_total = current.total_large();
     let small_total = current.total_small();
@@ -396,26 +445,30 @@ fn draw_distribution_panel_egui(
     let small_ratio = current.left_small_ratio() as f32;
 
     egui::Window::new(egui::RichText::new("Particle Distribution").strong())
-        .anchor(egui::Align2::LEFT_TOP, egui::vec2(10.0, 10.0))
-        .default_width(DISTRIBUTION_WINDOW_WIDTH)
-        .collapsible(false)
+        .anchor(
+            if layout.mobile {
+                egui::Align2::LEFT_BOTTOM
+            } else {
+                egui::Align2::LEFT_TOP
+            },
+            layout.distribution_offset,
+        )
+        .default_width(layout.distribution_width)
+        .min_width(layout.distribution_width)
+        .max_width(layout.distribution_width)
+        .collapsible(true)
+        .default_open(!layout.mobile)
         .resizable(false)
         .frame(egui::Frame {
             fill: COLOR_PANEL_BG,
             stroke: egui::Stroke::new(1.0, COLOR_PANEL_BORDER),
             corner_radius: egui::CornerRadius::same(10),
-            inner_margin: egui::Margin::same(12),
+            inner_margin: egui::Margin::same(layout.panel_margin),
             ..Default::default()
         })
         .show(ctx, |ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
-
-            full_width_section(ui, |ui| {
-                ui.label(
-                    egui::RichText::new("Current Distribution")
-                        .color(COLOR_ACCENT)
-                        .strong(),
-                );
+            ui.spacing_mut().item_spacing = layout.item_spacing;
+            settings_section(ui, "Current Distribution", true, |ui| {
                 ui.label(format!(
                     "Large: L {} / R {} ({:.1}%)",
                     current.left_large,
@@ -445,13 +498,7 @@ fn draw_distribution_panel_egui(
                 );
             });
 
-            full_width_section(ui, |ui| {
-                ui.label(
-                    egui::RichText::new("History (Left ratio over time)")
-                        .color(COLOR_ACCENT)
-                        .strong(),
-                );
-
+            settings_section(ui, "History (Left ratio over time)", !layout.mobile, |ui| {
                 let large_points: Vec<[f64; 2]> = history
                     .timestamps
                     .iter()
@@ -466,7 +513,7 @@ fn draw_distribution_panel_egui(
                     .collect();
 
                 Plot::new("distribution_history_plot")
-                    .height(150.0)
+                    .height(layout.plot_height)
                     .legend(Legend::default().position(Corner::LeftTop))
                     .allow_zoom(false)
                     .allow_drag([true, false])
@@ -474,8 +521,6 @@ fn draw_distribution_panel_egui(
                     .include_y(0.0)
                     .include_y(1.0)
                     .show(ui, |plot_ui| {
-                        // Drag で過去範囲を見ている間は保持し、カーソルが離れたら
-                        // X 軸の auto-bounds に戻して最新データへ追従させる。
                         let response = plot_ui.response();
                         if !response.hovered() && !response.dragged() {
                             plot_ui.set_auto_bounds([true, true]);
