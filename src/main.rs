@@ -14,10 +14,7 @@ use physics::{
     cpu::{SpatialHashGrid, run_physics_substeps_plain},
     gpu::{GpuPhysicsState, ParticleGpu},
 };
-use rendering::{
-    ContainerRenderer, InstanceData, LARGE_PARTICLE_COLOR, SMALL_PARTICLE_COLOR,
-    create_particle_pipeline, normalized_instance_capacity,
-};
+use rendering::{ContainerRenderer, LARGE_PARTICLE_COLOR, SMALL_PARTICLE_COLOR};
 use simulation::{
     config_toml::{LoadedConfig, resolve_startup_config},
     constants::{PhysicsBackend, SimulationConstants, UiControlRanges, advance_oscillation},
@@ -25,9 +22,9 @@ use simulation::{
 };
 use ui::{PerfDisplayState, draw_control_panel, draw_distribution_panel};
 
-use mikage::wgpu;
 use mikage::wgpu::util::DeviceExt;
 use mikage::winit::dpi::PhysicalSize;
+use mikage::{InstanceData, InstanceRenderer, InstanceRendererConfig, wgpu};
 
 #[cfg(not(target_family = "wasm"))]
 #[derive(Debug, Parser)]
@@ -38,15 +35,9 @@ struct CliArgs {
 }
 
 struct RenderResources {
-    particle_pipeline: wgpu::RenderPipeline,
+    instance_renderer: InstanceRenderer,
     view_uniform_buffer: wgpu::Buffer,
     view_bind_group: wgpu::BindGroup,
-    sphere_vertex_buffer: wgpu::Buffer,
-    sphere_index_buffer: wgpu::Buffer,
-    sphere_index_count: u32,
-    instance_buffer: wgpu::Buffer,
-    instance_capacity: u32,
-    instance_count: u32,
     depth_view: wgpu::TextureView,
     container: ContainerRenderer,
 }
@@ -198,23 +189,24 @@ impl GranularClockApp {
 
     /// Upload current particles to GPU physics state
     fn upload_particles_to_gpu(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        let Some(render) = self.render.as_ref() else {
-            return;
-        };
-
         let gpu_particles = self.particles_to_gpu();
         if gpu_particles.is_empty() {
             return;
         }
 
         let generation = self.particle_store.generation;
-        let instance_buffer = &render.instance_buffer;
 
-        let Some(gpu) = self.gpu_physics.as_mut() else {
+        let (Some(render), Some(gpu)) = (self.render.as_mut(), self.gpu_physics.as_mut()) else {
             return;
         };
 
-        gpu.upload_particles(device, queue, &gpu_particles, generation, instance_buffer);
+        gpu.upload_particles(
+            device,
+            queue,
+            &gpu_particles,
+            generation,
+            render.instance_renderer.instance_buffer(),
+        );
         self.last_gpu_store_generation = generation;
         self.gpu_particles_uploaded = true;
     }
@@ -224,33 +216,37 @@ impl mikage::App for GranularClockApp {
     fn init(&mut self, ctx: &mikage::GpuContext, size: PhysicalSize<u32>) {
         let device = &ctx.device;
 
-        // Generate IcoSphere mesh (subdivision 2 = 162 vertices, 320 faces)
+        // Scene bind group layout (shared by InstanceRenderer and ContainerRenderer)
+        let scene_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("scene_bind_group_layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
+        // Create instance renderer with IcoSphere mesh
         let sphere = mikage::IcoSphereMesh::generate(2);
+        let mut instance_renderer = InstanceRenderer::new(
+            device,
+            ctx.render_format(),
+            &scene_bind_group_layout,
+            &sphere.positions,
+            &sphere.normals,
+            &sphere.indices,
+            InstanceRendererConfig::default_3d(),
+        );
 
-        // Interleave positions and normals into a single buffer [pos, norm, pos, norm, ...]
-        let vertex_count = sphere.positions.len();
-        let mut vertex_data: Vec<f32> = Vec::with_capacity(vertex_count * 6);
-        for i in 0..vertex_count {
-            vertex_data.extend_from_slice(&sphere.positions[i]);
-            vertex_data.extend_from_slice(&sphere.normals[i]);
-        }
-
-        let sphere_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("sphere_vertex_buffer"),
-            contents: bytemuck::cast_slice(&vertex_data),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
-        let sphere_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("sphere_index_buffer"),
-            contents: bytemuck::cast_slice(&sphere.indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-
-        let sphere_index_count = sphere.indices.len() as u32;
-
-        // Create particle pipeline
-        let pipeline_result = create_particle_pipeline(device, ctx.render_format());
+        // Pre-allocate instance buffer for expected particle count
+        let total_particles = self.constants.particle.num_large + self.constants.particle.num_small;
+        instance_renderer.ensure_capacity(device, total_particles);
 
         // Create view uniform buffer
         let view_uniform = mikage::SceneUniform::new(glam::Mat4::IDENTITY, glam::Vec3::ZERO);
@@ -263,50 +259,29 @@ impl mikage::App for GranularClockApp {
         // Create view bind group
         let view_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("view_bind_group"),
-            layout: &pipeline_result.view_bind_group_layout,
+            layout: &scene_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: view_uniform_buffer.as_entire_binding(),
             }],
         });
 
-        // Create instance buffer (pre-allocate for expected particle count)
-        // Include STORAGE usage so GPU compute can write to it
-        let total_particles = self.constants.particle.num_large + self.constants.particle.num_small;
-        let instance_capacity = normalized_instance_capacity(total_particles);
-        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("particle_instance_buffer"),
-            size: (instance_capacity as u64) * std::mem::size_of::<InstanceData>() as u64,
-            usage: wgpu::BufferUsages::VERTEX
-                | wgpu::BufferUsages::COPY_DST
-                | wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
-
         // Create depth texture
         let (_depth_texture, depth_view) =
             mikage::create_depth_texture(device, size, mikage::DEPTH_FORMAT);
 
-        // Create container renderer (shares the view bind group layout)
-        let container = ContainerRenderer::new(
-            device,
-            ctx.render_format(),
-            &pipeline_result.view_bind_group_layout,
-        );
+        // Create container renderer (shares the scene bind group layout)
+        let container =
+            ContainerRenderer::new(device, ctx.render_format(), &scene_bind_group_layout);
 
         // Create GPU physics state
-        let gpu_physics = GpuPhysicsState::new(device, &self.constants, &instance_buffer);
+        let gpu_physics =
+            GpuPhysicsState::new(device, &self.constants, instance_renderer.instance_buffer());
 
         self.render = Some(RenderResources {
-            particle_pipeline: pipeline_result.pipeline,
+            instance_renderer,
             view_uniform_buffer,
             view_bind_group,
-            sphere_vertex_buffer,
-            sphere_index_buffer,
-            sphere_index_count,
-            instance_buffer,
-            instance_capacity,
-            instance_count: 0,
             depth_view,
             container,
         });
@@ -347,42 +322,22 @@ impl mikage::App for GranularClockApp {
 
                 // Build instance data from particles and upload
                 let instances = self.build_instance_data();
-                let instance_count = instances.len() as u32;
 
                 if let Some(render) = self.render.as_mut() {
-                    // Resize instance buffer if needed
-                    if instance_count > render.instance_capacity {
-                        let new_capacity = normalized_instance_capacity(instance_count);
-                        render.instance_buffer =
-                            ctx.gpu.device.create_buffer(&wgpu::BufferDescriptor {
-                                label: Some("particle_instance_buffer"),
-                                size: (new_capacity as u64)
-                                    * std::mem::size_of::<InstanceData>() as u64,
-                                usage: wgpu::BufferUsages::VERTEX
-                                    | wgpu::BufferUsages::COPY_DST
-                                    | wgpu::BufferUsages::STORAGE,
-                                mapped_at_creation: false,
-                            });
-                        render.instance_capacity = new_capacity;
-
-                        // Rebuild instance writer bind group for new buffer
-                        if let Some(gpu) = self.gpu_physics.as_mut() {
-                            gpu.rebuild_instance_bind_group(
-                                &ctx.gpu.device,
-                                &render.instance_buffer,
-                            );
-                        }
-                    }
-
-                    // Upload instance data to GPU
-                    if instance_count > 0 {
-                        ctx.gpu.queue.write_buffer(
-                            &render.instance_buffer,
-                            0,
-                            bytemuck::cast_slice(&instances),
+                    let reallocated = render
+                        .instance_renderer
+                        .ensure_capacity(&ctx.gpu.device, instances.len() as u32);
+                    if reallocated && let Some(gpu) = self.gpu_physics.as_mut() {
+                        gpu.rebuild_instance_bind_group(
+                            &ctx.gpu.device,
+                            render.instance_renderer.instance_buffer(),
                         );
                     }
-                    render.instance_count = instance_count;
+                    render.instance_renderer.update_instances(
+                        &ctx.gpu.device,
+                        &ctx.gpu.queue,
+                        &instances,
+                    );
                 }
             }
             PhysicsBackend::Gpu => {
@@ -425,7 +380,7 @@ impl mikage::App for GranularClockApp {
                 if let Some(render) = self.render.as_mut() {
                     let total =
                         self.constants.particle.num_large + self.constants.particle.num_small;
-                    render.instance_count = total;
+                    render.instance_renderer.set_instance_count(total);
                 }
             }
         }
@@ -530,20 +485,10 @@ impl mikage::App for GranularClockApp {
         });
 
         // Draw particles (opaque, instanced)
-        if render.instance_count > 0 {
-            pass.set_pipeline(&render.particle_pipeline);
-            pass.set_bind_group(0, &render.view_bind_group, &[]);
-            pass.set_vertex_buffer(0, render.sphere_vertex_buffer.slice(..));
-            pass.set_vertex_buffer(1, render.instance_buffer.slice(..));
-            pass.set_index_buffer(
-                render.sphere_index_buffer.slice(..),
-                wgpu::IndexFormat::Uint32,
-            );
-            pass.draw_indexed(0..render.sphere_index_count, 0, 0..render.instance_count);
-        }
+        pass.set_bind_group(0, &render.view_bind_group, &[]);
+        render.instance_renderer.render(&mut pass);
 
         // Draw container (opaque pieces first, then transparent walls)
-        // The view bind group (group 0) must be set for the container pipelines too.
         pass.set_bind_group(0, &render.view_bind_group, &[]);
         render.container.render(&mut pass);
     }
