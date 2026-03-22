@@ -1,4 +1,4 @@
-use crate::rendering::shaders::preprocess_compute_shader;
+use crate::rendering::shaders::physics_shader_processor;
 use std::num::NonZeroU64;
 
 use super::buffers::SortParamsGpu;
@@ -164,36 +164,43 @@ impl GpuPhysicsPipelines {
 
         // --- Shader modules ---
 
-        let hash_keys_source =
-            preprocess_compute_shader(include_str!("../../../assets/shaders/hash_keys.wgsl"));
+        let sp = physics_shader_processor();
+
+        let hash_keys_source = sp
+            .resolve(include_str!("../../../assets/shaders/hash_keys.wgsl"))
+            .expect("failed to resolve hash_keys shader");
         let hash_keys_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("hash_keys_shader"),
             source: wgpu::ShaderSource::Wgsl(hash_keys_source.into()),
         });
 
-        let bitonic_sort_source =
-            preprocess_compute_shader(include_str!("../../../assets/shaders/bitonic_sort.wgsl"));
+        let bitonic_sort_source = sp
+            .resolve(include_str!("../../../assets/shaders/bitonic_sort.wgsl"))
+            .expect("failed to resolve bitonic_sort shader");
         let bitonic_sort_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("bitonic_sort_shader"),
             source: wgpu::ShaderSource::Wgsl(bitonic_sort_source.into()),
         });
 
-        let cell_ranges_source =
-            preprocess_compute_shader(include_str!("../../../assets/shaders/cell_ranges.wgsl"));
+        let cell_ranges_source = sp
+            .resolve(include_str!("../../../assets/shaders/cell_ranges.wgsl"))
+            .expect("failed to resolve cell_ranges shader");
         let cell_ranges_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("cell_ranges_shader"),
             source: wgpu::ShaderSource::Wgsl(cell_ranges_source.into()),
         });
 
-        let collision_source =
-            preprocess_compute_shader(include_str!("../../../assets/shaders/collision.wgsl"));
+        let collision_source = sp
+            .resolve(include_str!("../../../assets/shaders/collision.wgsl"))
+            .expect("failed to resolve collision shader");
         let collision_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("collision_shader"),
             source: wgpu::ShaderSource::Wgsl(collision_source.into()),
         });
 
-        let integrate_source =
-            preprocess_compute_shader(include_str!("../../../assets/shaders/integrate.wgsl"));
+        let integrate_source = sp
+            .resolve(include_str!("../../../assets/shaders/integrate.wgsl"))
+            .expect("failed to resolve integrate shader");
         let integrate_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("integrate_shader"),
             source: wgpu::ShaderSource::Wgsl(integrate_source.into()),

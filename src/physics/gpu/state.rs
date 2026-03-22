@@ -8,7 +8,7 @@ use std::sync::{
 
 use super::buffers::{GpuPhysicsBuffers, ParticleGpu, SimulationParams, SortParamsGpu};
 use super::pipeline::GpuPhysicsPipelines;
-use crate::rendering::shaders::preprocess_compute_shader;
+use crate::rendering::shaders::physics_shader_processor;
 use crate::rendering::{LARGE_PARTICLE_COLOR, SMALL_PARTICLE_COLOR};
 use crate::simulation::constants::SimulationConstants;
 use bytemuck::{Pod, Zeroable};
@@ -165,9 +165,11 @@ impl GpuPhysicsState {
                 push_constant_ranges: &[],
             });
 
-        let instance_source = preprocess_compute_shader(include_str!(
-            "../../../assets/shaders/particle_to_instance.wgsl"
-        ));
+        let instance_source = physics_shader_processor()
+            .resolve(include_str!(
+                "../../../assets/shaders/particle_to_instance.wgsl"
+            ))
+            .expect("failed to resolve particle_to_instance shader");
         let instance_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("particle_to_instance_shader"),
             source: wgpu::ShaderSource::Wgsl(instance_source.into()),

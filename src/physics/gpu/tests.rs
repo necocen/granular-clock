@@ -1183,24 +1183,10 @@ fn test_readback_buffer_thread_safety() {
 }
 
 #[cfg(not(target_family = "wasm"))]
-fn inject_shared_types(shader_src: &str) -> String {
-    let types_src = include_str!("../../../assets/shaders/physics_types.wgsl")
-        .lines()
-        .filter(|line| !line.trim_start().starts_with("#define_import_path"))
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let body = shader_src
-        .lines()
-        .filter(|line| {
-            !line
-                .trim_start()
-                .starts_with("#import granular_clock::physics_types::")
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    format!("{types_src}\n{body}")
+fn resolve_shader(shader_src: &str) -> String {
+    crate::rendering::shaders::physics_shader_processor()
+        .resolve(shader_src)
+        .expect("failed to resolve shader")
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -1650,25 +1636,25 @@ fn create_test_pipelines(
 
     let hash_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(&format!("{label_prefix}_hash_keys")),
-        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(inject_shared_types(
+        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(resolve_shader(
             include_str!("../../../assets/shaders/hash_keys.wgsl"),
         ))),
     });
     let cell_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(&format!("{label_prefix}_cell_ranges")),
-        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(inject_shared_types(
+        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(resolve_shader(
             include_str!("../../../assets/shaders/cell_ranges.wgsl"),
         ))),
     });
     let collision_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(&format!("{label_prefix}_collision")),
-        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(inject_shared_types(
+        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(resolve_shader(
             include_str!("../../../assets/shaders/collision.wgsl"),
         ))),
     });
     let integrate_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(&format!("{label_prefix}_integrate")),
-        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(inject_shared_types(
+        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(resolve_shader(
             include_str!("../../../assets/shaders/integrate.wgsl"),
         ))),
     });
@@ -1690,7 +1676,7 @@ fn create_test_pipelines(
             });
         let bitonic_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some(&format!("{label_prefix}_bitonic_sort")),
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(inject_shared_types(
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(resolve_shader(
                 include_str!("../../../assets/shaders/bitonic_sort.wgsl"),
             ))),
         });

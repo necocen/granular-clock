@@ -1,7 +1,7 @@
 // Bitonic Sort シェーダー
 // (key, particle_id) ペアをソート
 
-#import granular_clock::physics_types::{Particle, Params}
+#import granular_clock::physics_types
 
 struct SortParams {
     j: u32,
