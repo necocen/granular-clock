@@ -1,29 +1,16 @@
-use bevy::{
-    asset::{load_internal_asset, uuid_handle},
-    prelude::*,
-    shader::Shader,
-};
-
-#[derive(Resource, Default)]
-struct RenderingEmbeddedShadersLoaded;
-
-pub const PARTICLE_INSTANCING_SHADER_HANDLE: Handle<Shader> =
-    uuid_handle!("6dfc52b8-8c29-4f40-a45e-5468686e6ff7");
-
-pub fn load_rendering_internal_shaders(app: &mut App) {
-    if app
-        .world()
-        .contains_resource::<RenderingEmbeddedShadersLoaded>()
-    {
-        return;
-    }
-
-    load_internal_asset!(
-        app,
-        PARTICLE_INSTANCING_SHADER_HANDLE,
-        "../../assets/shaders/particle_instancing.wgsl",
-        Shader::from_wgsl
-    );
-
-    app.insert_resource(RenderingEmbeddedShadersLoaded);
+/// Preprocess a compute shader by prepending physics_types.wgsl content.
+/// Removes #import and #define_import_path lines.
+pub fn preprocess_compute_shader(main_source: &str) -> String {
+    let types = include_str!("../../assets/shaders/physics_types.wgsl");
+    let types_clean: String = types
+        .lines()
+        .filter(|l| !l.starts_with("#define_import_path"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let main_clean: String = main_source
+        .lines()
+        .filter(|l| !l.starts_with("#import"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("{}\n{}", types_clean, main_clean)
 }

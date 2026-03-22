@@ -1,12 +1,11 @@
-use bevy::prelude::*;
+use glam::Vec3;
 use std::collections::HashMap;
 
-use crate::simulation::constants::{GridSettings, SimulationConstants};
+use crate::simulation::constants::GridSettings;
 
 pub type GridCell = (i32, i32, i32);
 
 /// 空間ハッシュグリッドによる高速な近傍検索（CPU用）
-#[derive(Resource)]
 pub struct SpatialHashGrid {
     pub cell_size: f32,
     pub table_size: usize,
@@ -111,13 +110,4 @@ impl SpatialHashGrid {
         ];
         &OFFSETS
     }
-}
-
-/// GridSettings から SpatialHashGrid を初期化するシステム
-pub fn init_spatial_hash_grid(mut commands: Commands, constants: Res<SimulationConstants>) {
-    let grid_settings: GridSettings = constants.grid;
-    commands.insert_resource(SpatialHashGrid::new(
-        grid_settings.cell_size,
-        grid_settings.table_size,
-    ));
 }

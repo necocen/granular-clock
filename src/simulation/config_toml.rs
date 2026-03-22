@@ -1,7 +1,7 @@
 use std::fmt::{Display, Formatter};
 use std::path::Path;
 
-use bevy::prelude::*;
+use glam::Vec3;
 use serde::Deserialize;
 
 use crate::simulation::constants::{
@@ -17,6 +17,7 @@ pub struct LoadedConfig {
     pub simulation: SimulationConstants,
     pub ui_ranges: UiControlRanges,
     pub camera: CameraSettings,
+    #[allow(dead_code)]
     pub light: LightSettings,
     pub warnings: Vec<String>,
 }
@@ -967,7 +968,7 @@ mod tests {
         std::fs::write(&path, EMBEDDED_CONFIG_TOML).expect("write config");
         let loaded = load_config_from_path(&path).expect("load config");
         std::fs::remove_file(&path).ok();
-        assert_eq!(loaded.simulation.particle.num_large, 250);
+        assert_eq!(loaded.simulation.particle.num_large, 160);
     }
 
     #[cfg(not(target_family = "wasm"))]

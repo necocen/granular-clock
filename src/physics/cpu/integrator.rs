@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use glam::Vec3;
 
 /// Velocity Verlet積分の前半ステップ
 /// 速度を半分更新し、位置を全更新

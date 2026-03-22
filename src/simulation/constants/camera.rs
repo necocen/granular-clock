@@ -1,7 +1,7 @@
-use bevy::prelude::*;
+use glam::Vec3;
 
 /// Camera initial settings (startup-only)
-#[derive(Resource, Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct CameraSettings {
     /// Camera world position
     pub position: Vec3,
@@ -19,7 +19,7 @@ impl Default for CameraSettings {
 }
 
 /// Scene light initial settings (startup-only)
-#[derive(Resource, Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct LightSettings {
     /// Ambient light brightness
     pub ambient_brightness: f32,

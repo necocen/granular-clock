@@ -1,4 +1,3 @@
-use bevy::prelude::*;
 use std::f32::consts::PI;
 
 use crate::simulation::state::SimulationState;
@@ -6,7 +5,7 @@ use crate::simulation::state::SimulationState;
 const TWO_PI: f32 = 2.0 * PI;
 
 /// 振動パラメータ
-#[derive(Resource, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct OscillationParams {
     /// 振幅 (m)
     pub amplitude: f32,

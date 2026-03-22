@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use glam::Vec3;
 
 use crate::physics::{
     ContactState, WallContactForce, clamp_to_container, clamp_velocity,

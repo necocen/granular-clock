@@ -1,9 +1,9 @@
-use bevy::prelude::*;
+use glam::Vec3;
 
 use super::{config::SimulationConfig, container::ContainerParams};
 
 /// 粒子間接触の材料パラメータ（CPU/GPU 共通）
-#[derive(Resource, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct MaterialProperties {
     /// 粒子密度 (kg/m^3)
     pub density: f32,
@@ -33,7 +33,7 @@ impl Default for MaterialProperties {
 }
 
 /// 壁との接触パラメータ（CPU/GPU 共通）
-#[derive(Resource, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct WallProperties {
     /// 壁の剛性（ペナルティ法用）
     pub stiffness: f32,
@@ -57,7 +57,7 @@ impl Default for WallProperties {
 }
 
 /// シミュレーションの物理定数（CPU/GPU 共通）
-#[derive(Resource, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct PhysicsConstants {
     /// 重力加速度
     pub gravity: Vec3,
@@ -72,7 +72,7 @@ impl Default for PhysicsConstants {
 }
 
 /// 空間グリッド設定（CPU/GPU 共通）
-#[derive(Resource, Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct GridSettings {
     /// セルサイズ（最大粒子直径以上が推奨）
     pub cell_size: f32,

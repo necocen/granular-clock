@@ -1,8 +1,5 @@
-use bevy::{
-    prelude::*,
-    render::{render_resource::*, renderer::RenderDevice},
-};
 use bytemuck::{Pod, Zeroable};
+use wgpu::util::DeviceExt;
 
 /// GPU上の粒子データ構造（16バイトアライメント）
 #[repr(C)]
@@ -168,26 +165,25 @@ fn bitonic_sort_pass_count(n: u32) -> u32 {
 }
 
 /// GPU バッファリソース
-#[derive(Resource)]
 pub struct GpuPhysicsBuffers {
     /// 粒子データ A（各サブステップ後の最終結果スロット）
-    pub particles_a: Buffer,
+    pub particles_a: wgpu::Buffer,
     /// 粒子データ B（中間スロット）
-    pub particles_b: Buffer,
+    pub particles_b: wgpu::Buffer,
     /// 空間ハッシュキー
-    pub keys: Buffer,
+    pub keys: wgpu::Buffer,
     /// 粒子ID（ソート用）
-    pub particle_ids: Buffer,
+    pub particle_ids: wgpu::Buffer,
     /// セル範囲
-    pub cell_ranges: Buffer,
+    pub cell_ranges: wgpu::Buffer,
     /// 力の累積
-    pub forces: Buffer,
+    pub forces: wgpu::Buffer,
     /// トルクの累積
-    pub torques: Buffer,
+    pub torques: wgpu::Buffer,
     /// シミュレーションパラメータ
-    pub params: Buffer,
+    pub params: wgpu::Buffer,
     /// Bitonic sort パラメータ
-    pub sort_params: Buffer,
+    pub sort_params: wgpu::Buffer,
     /// sort_params の動的オフセット間隔（bytes）
     pub sort_params_stride: u32,
     /// sort_params に格納可能な最大パス数
@@ -197,82 +193,85 @@ pub struct GpuPhysicsBuffers {
     /// バッファ容量（粒子スロット数）
     pub capacity: u32,
     /// 最後にアップロードしたデータ世代
+    #[allow(dead_code)]
     pub last_uploaded_generation: u64,
 }
 
 impl GpuPhysicsBuffers {
-    pub fn new(render_device: &RenderDevice, num_particles: u32, grid_size: u32) -> Self {
+    pub fn new(device: &wgpu::Device, num_particles: u32, grid_size: u32) -> Self {
         let particle_size = std::mem::size_of::<ParticleGpu>() as u64;
         let particles_buffer_size = particle_size * num_particles as u64;
 
-        let particles_a = render_device.create_buffer(&BufferDescriptor {
+        let particles_a = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("particles_a"),
             size: particles_buffer_size,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
-        let particles_b = render_device.create_buffer(&BufferDescriptor {
+        let particles_b = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("particles_b"),
             size: particles_buffer_size,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
-        let keys = render_device.create_buffer(&BufferDescriptor {
+        let keys = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("keys"),
             size: 4 * num_particles as u64,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let particle_ids = render_device.create_buffer(&BufferDescriptor {
+        let particle_ids = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("particle_ids"),
             size: 4 * num_particles as u64,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let num_cells = grid_size * grid_size * grid_size;
-        let cell_ranges = render_device.create_buffer(&BufferDescriptor {
+        let cell_ranges = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("cell_ranges"),
             size: std::mem::size_of::<CellRange>() as u64 * num_cells as u64,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let forces = render_device.create_buffer(&BufferDescriptor {
+        let forces = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("forces"),
             size: 16 * num_particles as u64, // vec4<f32> per particle
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let torques = render_device.create_buffer(&BufferDescriptor {
+        let torques = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("torques"),
             size: 16 * num_particles as u64, // vec4<f32> per particle
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let params = render_device.create_buffer(&BufferDescriptor {
+        let params = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("simulation_params"),
             size: std::mem::size_of::<SimulationParams>() as u64,
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let sort_params_size = std::mem::size_of::<SortParamsGpu>() as u64;
-        let sort_params_alignment = render_device
-            .limits()
-            .min_uniform_buffer_offset_alignment
-            .max(1) as u64;
+        let sort_params_alignment =
+            device.limits().min_uniform_buffer_offset_alignment.max(1) as u64;
         let sort_params_stride = align_up(sort_params_size, sort_params_alignment) as u32;
         let sort_params_capacity_passes = bitonic_sort_pass_count(num_particles.max(2));
-        let sort_params = render_device.create_buffer(&BufferDescriptor {
+        let sort_params = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("bitonic_sort_params"),
             size: sort_params_stride as u64 * sort_params_capacity_passes.max(1) as u64,
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -295,27 +294,51 @@ impl GpuPhysicsBuffers {
     }
 
     /// Velocity Verlet 前半の入力（A）を取得
-    pub fn forward_in(&self) -> &Buffer {
+    pub fn forward_in(&self) -> &wgpu::Buffer {
         &self.particles_a
     }
 
     /// Velocity Verlet 前半の出力（B）を取得
-    pub fn forward_out(&self) -> &Buffer {
+    pub fn forward_out(&self) -> &wgpu::Buffer {
         &self.particles_b
     }
 
     /// Velocity Verlet 後半の入力（B）を取得
-    pub fn reverse_in(&self) -> &Buffer {
+    pub fn reverse_in(&self) -> &wgpu::Buffer {
         &self.particles_b
     }
 
     /// Velocity Verlet 後半の出力（A）を取得
-    pub fn reverse_out(&self) -> &Buffer {
+    pub fn reverse_out(&self) -> &wgpu::Buffer {
         &self.particles_a
     }
 
     /// 最新の粒子状態（A）を取得
-    pub fn latest_particles(&self) -> &Buffer {
+    pub fn latest_particles(&self) -> &wgpu::Buffer {
         &self.particles_a
+    }
+
+    /// ステージングバッファを作成（readback 用）
+    pub fn create_staging_buffer(device: &wgpu::Device, num_particles: u32) -> wgpu::Buffer {
+        let particle_size = std::mem::size_of::<ParticleGpu>() as u64;
+        let size = particle_size * num_particles as u64;
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("readback_staging"),
+            size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        })
+    }
+
+    /// substep params upload buffer を作成
+    pub fn create_params_upload_buffer(
+        device: &wgpu::Device,
+        params_list: &[SimulationParams],
+    ) -> wgpu::Buffer {
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("gpu_physics_substep_params_upload"),
+            contents: bytemuck::cast_slice(params_list),
+            usage: wgpu::BufferUsages::COPY_SRC,
+        })
     }
 }

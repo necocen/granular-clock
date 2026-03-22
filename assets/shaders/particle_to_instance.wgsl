@@ -12,7 +12,7 @@ struct InstanceData {
     color: vec4<f32>,      // RGBA
 }
 
-struct Params {
+struct InstanceWriterParams {
     num_particles: u32,
     num_large: u32,
     // 8 bytes padding (WGSL auto-aligns vec4 to 16 bytes)
@@ -22,7 +22,7 @@ struct Params {
 
 @group(0) @binding(0) var<storage, read> particles: array<Particle>;
 @group(0) @binding(1) var<storage, read_write> instances: array<InstanceData>;
-@group(0) @binding(2) var<uniform> params: Params;
+@group(0) @binding(2) var<uniform> params: InstanceWriterParams;
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {

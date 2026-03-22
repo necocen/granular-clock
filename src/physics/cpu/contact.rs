@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use glam::Vec3;
 use std::collections::HashMap;
 use std::f32::consts::PI;
 
@@ -14,7 +14,7 @@ pub struct ContactState {
 }
 
 /// 接触履歴を管理するリソース
-#[derive(Resource, Default)]
+#[derive(Default)]
 pub struct ContactHistory {
     /// キー: (min(index_a, index_b), max(index_a, index_b))
     pub contacts: HashMap<(usize, usize), ContactState>,

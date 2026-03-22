@@ -1,12 +1,18 @@
+[workspace]
+members = [".", "mikage"]
+resolver = "3"
+
 [package]
 name = "granular-clock"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy = { version = "0.18", default-features = false, features = ["default_app", "default_platform", "bevy_core_pipeline", "3d_bevy_render", "picking", "webgpu"] }
-bevy_egui = "0.39.1"
-bevy_panorbit_camera = { version = "0.34.0", features = ["bevy_egui"] }
+mikage = { path = "mikage" }
+wgpu = "27"
+egui = "0.33"
+tracing = "0.1"
+glam = "0.29"
 bytemuck = { version = "1.21", features = ["derive"] }
 clap = { version = "4.5", features = ["derive"] }
 egui_plot = "0.34.0"
@@ -18,10 +24,6 @@ toml = "0.9"
 [target.'cfg(target_family = "wasm")'.dependencies]
 # WASM-only dependencies
 getrandom = { version = "0.3", features = ["wasm_js"] }
-
-[dev-dependencies]
-pollster = "0.4"
-wgpu = "27.0.1"
 
 [profile.dev]
 opt-level = 1
