@@ -22,7 +22,6 @@ use simulation::{
 };
 use ui::{PerfDisplayState, draw_control_panel, draw_distribution_panel};
 
-use mikage::wgpu::util::DeviceExt;
 use mikage::winit::dpi::PhysicalSize;
 use mikage::{InstanceData, InstanceRenderer, InstanceRendererConfig, wgpu};
 
@@ -36,8 +35,7 @@ struct CliArgs {
 
 struct RenderResources {
     instance_renderer: InstanceRenderer,
-    view_uniform_buffer: wgpu::Buffer,
-    view_bind_group: wgpu::BindGroup,
+    scene: mikage::SceneBinding,
     depth_view: wgpu::TextureView,
     container: ContainerRenderer,
 }
@@ -216,28 +214,14 @@ impl mikage::App for GranularClockApp {
     fn init(&mut self, ctx: &mikage::GpuContext, size: PhysicalSize<u32>) {
         let device = &ctx.device;
 
-        // Scene bind group layout (shared by InstanceRenderer and ContainerRenderer)
-        let scene_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("scene_bind_group_layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
+        let scene = mikage::SceneBinding::new(device);
 
         // Create instance renderer with IcoSphere mesh
         let sphere = mikage::IcoSphereMesh::generate(2);
         let mut instance_renderer = InstanceRenderer::new(
             device,
             ctx.render_format(),
-            &scene_bind_group_layout,
+            scene.layout(),
             &sphere.positions,
             &sphere.normals,
             &sphere.indices,
@@ -248,31 +232,12 @@ impl mikage::App for GranularClockApp {
         let total_particles = self.constants.particle.num_large + self.constants.particle.num_small;
         instance_renderer.ensure_capacity(device, total_particles);
 
-        // Create view uniform buffer
-        let view_uniform = mikage::SceneUniform::new(glam::Mat4::IDENTITY, glam::Vec3::ZERO);
-        let view_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("view_uniform_buffer"),
-            contents: bytemuck::bytes_of(&view_uniform),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        // Create view bind group
-        let view_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("view_bind_group"),
-            layout: &scene_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: view_uniform_buffer.as_entire_binding(),
-            }],
-        });
-
         // Create depth texture
         let (_depth_texture, depth_view) =
             mikage::create_depth_texture(device, size, mikage::DEPTH_FORMAT);
 
         // Create container renderer (shares the scene bind group layout)
-        let container =
-            ContainerRenderer::new(device, ctx.render_format(), &scene_bind_group_layout);
+        let container = ContainerRenderer::new(device, ctx.render_format(), scene.layout());
 
         // Create GPU physics state
         let gpu_physics =
@@ -280,8 +245,7 @@ impl mikage::App for GranularClockApp {
 
         self.render = Some(RenderResources {
             instance_renderer,
-            view_uniform_buffer,
-            view_bind_group,
+            scene,
             depth_view,
             container,
         });
@@ -392,14 +356,9 @@ impl mikage::App for GranularClockApp {
             } else {
                 1.0
             };
-            let view_proj = ctx.camera.view_projection_matrix(aspect);
-            let camera_pos = ctx.camera.position();
-            let view_uniform = mikage::SceneUniform::new(view_proj, camera_pos);
-            ctx.gpu.queue.write_buffer(
-                &render.view_uniform_buffer,
-                0,
-                bytemuck::bytes_of(&view_uniform),
-            );
+            render
+                .scene
+                .update_from_camera(&ctx.gpu.queue, &*ctx.camera, aspect);
 
             // Update container transforms
             render
@@ -485,11 +444,11 @@ impl mikage::App for GranularClockApp {
         });
 
         // Draw particles (opaque, instanced)
-        pass.set_bind_group(0, &render.view_bind_group, &[]);
+        pass.set_bind_group(0, render.scene.bind_group(), &[]);
         render.instance_renderer.render(&mut pass);
 
         // Draw container (opaque pieces first, then transparent walls)
-        pass.set_bind_group(0, &render.view_bind_group, &[]);
+        pass.set_bind_group(0, render.scene.bind_group(), &[]);
         render.container.render(&mut pass);
     }
 
