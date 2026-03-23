@@ -12,6 +12,7 @@ use crate::rendering::shaders::physics_shader_processor;
 use crate::rendering::{LARGE_PARTICLE_COLOR, SMALL_PARTICLE_COLOR};
 use crate::simulation::constants::SimulationConstants;
 use bytemuck::{Pod, Zeroable};
+use mikage::{create_compute_pipeline, storage_buffer_entry, uniform_buffer_entry};
 
 /// Instance writer パラメータ
 #[repr(C)]
@@ -121,48 +122,15 @@ impl GpuPhysicsState {
         let pipelines = GpuPhysicsPipelines::create(device);
 
         // Instance writer pipeline
+        let cs = wgpu::ShaderStages::COMPUTE;
         let instance_writer_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("particle_to_instance_layout"),
                 entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
+                    storage_buffer_entry(0, cs, true),
+                    storage_buffer_entry(1, cs, false),
+                    uniform_buffer_entry(2, cs),
                 ],
-            });
-
-        let instance_writer_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("particle_to_instance_pipeline_layout"),
-                bind_group_layouts: &[&instance_writer_bind_group_layout],
-                push_constant_ranges: &[],
             });
 
         let instance_source = physics_shader_processor()
@@ -170,20 +138,13 @@ impl GpuPhysicsState {
                 "../../../assets/shaders/particle_to_instance.wgsl"
             ))
             .expect("failed to resolve particle_to_instance shader");
-        let instance_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("particle_to_instance_shader"),
-            source: wgpu::ShaderSource::Wgsl(instance_source.into()),
-        });
-
-        let instance_writer_pipeline =
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("particle_to_instance_pipeline"),
-                layout: Some(&instance_writer_pipeline_layout),
-                module: &instance_module,
-                entry_point: Some("main"),
-                compilation_options: Default::default(),
-                cache: None,
-            });
+        let instance_writer_pipeline = create_compute_pipeline(
+            device,
+            "particle_to_instance",
+            &instance_source,
+            &[&instance_writer_bind_group_layout],
+            "main",
+        );
 
         let instance_writer_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("instance_compute_params"),
