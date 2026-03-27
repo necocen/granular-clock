@@ -1,14 +1,10 @@
-[workspace]
-members = [".", "mikage"]
-resolver = "3"
-
 [package]
 name = "granular-clock"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-mikage = { path = "mikage" }
+mikage = { git = "https://github.com/necocen/mikage.git", rev = "605a08a" }
 wgpu = "27"
 egui = "0.33"
 tracing = "0.1"

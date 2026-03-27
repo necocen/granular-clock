@@ -249,7 +249,9 @@ impl GranularClockApp {
 }
 
 impl mikage::App for GranularClockApp {
-    fn update(&mut self, ctx: &mut mikage::UpdateContext) {
+    type Camera = mikage::OrbitCamera;
+
+    fn update(&mut self, ctx: &mut mikage::UpdateContext<mikage::OrbitCamera>) {
         // Store dt for UI
         self.dt = ctx.dt;
 
@@ -364,7 +366,7 @@ impl mikage::App for GranularClockApp {
         );
     }
 
-    fn encode(&mut self, ctx: &mut mikage::FrameContext) {
+    fn encode(&mut self, ctx: &mut mikage::FrameContext<mikage::OrbitCamera>) {
         // Compute (GPU physics)
         if self.backend == PhysicsBackend::Gpu
             && !self.sim_state.paused
@@ -482,13 +484,9 @@ fn run_with_config_path(config_path: Option<PathBuf>) {
 
     mikage::run(
         move |ctx, size| GranularClockApp::new(loaded, ctx, size),
-        mikage::RunConfig {
-            title: "Granular Clock".to_string(),
-            width: 1440,
-            height: 960,
-            camera: Box::new(camera),
-            ..Default::default()
-        },
+        mikage::RunConfig::with_defaults(camera)
+            .with_title("Granular Clock")
+            .with_size(1440, 960),
     );
 }
 
