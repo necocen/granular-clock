@@ -4,7 +4,7 @@
 
 A simulator for the granular clock phenomenon [1]. When a mixture of two particle sizes is placed in a box with a low partition and subjected to vibration, the particle distribution on each side of the partition periodically reverses.
 
-This program uses physics simulation to model the particle dynamics and visualizes the results with [Bevy](https://bevyengine.org/).
+This program uses physics simulation to model the particle dynamics and visualizes the results with [mikage](https://github.com/necocen/mikage).
 
 **Live demo (runs in your browser):** https://granular.necocen.info/  
 **Supported browsers:** Chrome, Firefox, and Safari with WebGPU support
@@ -43,6 +43,18 @@ trunk serve
 This will open the simulation in your browser. Note that the build is quite slow due to WASM size optimization.
 
 When running in the browser, custom `simulation.toml` files cannot be passed at runtime.
+
+### Lighting
+
+`[ui.light]` controls particle lighting at startup. The vector toward the light is
+`directional_position - directional_target`. The legacy settings
+`ambient_brightness` and `directional_illuminance` are relative weights: the ambient
+fraction is `ambient_brightness / (ambient_brightness + directional_illuminance)`.
+These weights control contrast rather than absolute exposure; scaling both by the
+same factor preserves the lighting. Setting both to zero renders particles black.
+
+mikage's standard transparent container renderer is unlit. Shadows are unsupported;
+`shadows_enabled = true` produces a configuration warning and is treated as false.
 
 ## Controls
 

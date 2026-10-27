@@ -35,10 +35,6 @@ fn main() {
 fn run_with_config_path(config_path: Option<PathBuf>) {
     let loaded = resolve_startup_config(config_path.as_deref());
 
-    for warning in &loaded.warnings {
-        tracing::warn!("{warning}");
-    }
-
     // Create OrbitCamera from CameraSettings
     let mut camera = mikage::OrbitCamera::default();
     let cam_pos = loaded.camera.position;
@@ -50,7 +46,13 @@ fn run_with_config_path(config_path: Option<PathBuf>) {
     camera.pitch = (diff.y / diff.length()).asin();
 
     mikage::run(
-        move |ctx, target, size| GranularClockApp::new(loaded, ctx, target, size),
+        move |ctx, target, size| {
+            // mikage initializes logging before calling the app factory.
+            for warning in &loaded.warnings {
+                tracing::warn!("{warning}");
+            }
+            GranularClockApp::new(loaded, ctx, target, size)
+        },
         mikage::RunConfig::with_defaults(camera)
             .with_title("Granular Clock")
             .with_size(1440, 960)

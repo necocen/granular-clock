@@ -17,7 +17,6 @@ pub struct LoadedConfig {
     pub simulation: SimulationConstants,
     pub ui_ranges: UiControlRanges,
     pub camera: CameraSettings,
-    #[allow(dead_code)]
     pub light: LightSettings,
     pub warnings: Vec<String>,
 }
@@ -390,7 +389,7 @@ fn convert_raw_config(raw: RawRoot, source_name: &str) -> LoadedConfig {
                 &mut warnings,
             ),
         });
-    let light = raw
+    let mut light = raw
         .ui
         .light
         .as_ref()
@@ -443,6 +442,12 @@ fn convert_raw_config(raw: RawRoot, source_name: &str) -> LoadedConfig {
                 .shadows_enabled
                 .unwrap_or(light_defaults.shadows_enabled),
         });
+    if light.shadows_enabled {
+        warnings.push(format!(
+            "{source_name}: ui.light.shadows_enabled is unsupported by mikage; shadows are disabled."
+        ));
+        light.shadows_enabled = false;
+    }
 
     let particle = SimulationConfig {
         large_radius: sanitize_f32(
@@ -959,6 +964,17 @@ mod tests {
         let loaded = load_embedded_config();
         assert!(!loaded.simulation.particle.large_radius.is_nan());
         assert!(loaded.ui_ranges.oscillation_amplitude.min > 0.0);
+    }
+
+    #[test]
+    fn unsupported_shadows_are_disabled_with_a_warning() {
+        let source =
+            EMBEDDED_CONFIG_TOML.replace("shadows_enabled = false", "shadows_enabled = true");
+        let loaded = parse_loaded_config(&source, "shadow config").expect("parse shadow config");
+        assert!(!loaded.light.shadows_enabled);
+        assert!(loaded.warnings.iter().any(|warning| {
+            warning.contains("ui.light.shadows_enabled") && warning.contains("unsupported")
+        }));
     }
 
     #[cfg(not(target_family = "wasm"))]

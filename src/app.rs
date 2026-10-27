@@ -7,10 +7,14 @@ use crate::physics::{
     cpu::{SpatialHashGrid, run_physics_substeps_plain},
     gpu::{GpuPhysicsState, ParticleGpu},
 };
-use crate::rendering::{ContainerRenderer, LARGE_PARTICLE_COLOR, SMALL_PARTICLE_COLOR};
+use crate::rendering::{
+    ContainerRenderer, LARGE_PARTICLE_COLOR, SMALL_PARTICLE_COLOR, scene_uniform,
+};
 use crate::simulation::{
     config_toml::LoadedConfig,
-    constants::{PhysicsBackend, SimulationConstants, UiControlRanges, advance_oscillation},
+    constants::{
+        LightSettings, PhysicsBackend, SimulationConstants, UiControlRanges, advance_oscillation,
+    },
     state::SimulationState,
 };
 use crate::ui::{PerfDisplayState, draw_control_panel, draw_distribution_panel};
@@ -26,6 +30,7 @@ struct RenderResources {
 pub struct GranularClockApp {
     constants: SimulationConstants,
     ui_ranges: UiControlRanges,
+    light: LightSettings,
     sim_state: SimulationState,
     particle_store: ParticleStore,
     contact_history: ContactHistory,
@@ -100,6 +105,7 @@ impl GranularClockApp {
         let mut app = Self {
             constants,
             ui_ranges: loaded.ui_ranges,
+            light: loaded.light,
             sim_state: SimulationState::default(),
             particle_store: ParticleStore::default(),
             contact_history: ContactHistory::default(),
@@ -369,9 +375,8 @@ impl mikage::App for GranularClockApp {
         } else {
             1.0
         };
-        self.render
-            .scene
-            .update_from_camera(&ctx.gpu.queue, ctx.camera, aspect);
+        let uniform = scene_uniform(ctx.camera, aspect, &self.light);
+        self.render.scene.update(&ctx.gpu.queue, &uniform);
 
         // Update container transforms
         self.render
@@ -442,6 +447,65 @@ impl mikage::App for GranularClockApp {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    #[ignore = "requires native GPU adapter/device and renders real frames"]
+    fn configured_lighting_changes_rendered_pixels_and_survives_camera_updates() {
+        let mut loaded = crate::simulation::config_toml::load_embedded_config();
+        loaded.simulation.particle.num_large = 1;
+        loaded.simulation.particle.num_small = 0;
+        loaded.light.ambient_brightness = 1.0;
+        loaded.light.directional_illuminance = 0.0;
+        let mut camera = mikage::OrbitCamera::default();
+        camera.distance = 1.0;
+        let mut harness = pollster::block_on(mikage::HeadlessHarness::new(
+            crate::gpu_descriptor(),
+            mikage::RenderTargetConfig::default(),
+            PhysicalSize::new(320, 240),
+            camera,
+            move |gpu, target, size| GranularClockApp::new(loaded, gpu, target, size),
+        ))
+        .expect("initialize headless app");
+        harness.runtime.app.backend = PhysicsBackend::Cpu;
+        harness.runtime.app.sim_state.paused = true;
+        let particle = &mut harness.runtime.app.particle_store.particles[0];
+        particle.position = glam::Vec3::ZERO;
+        particle.radius = 0.08;
+
+        let render_center_red = |harness: &mut mikage::HeadlessHarness<GranularClockApp>| {
+            let frame = harness.render_once().unwrap();
+            harness.runtime.wait_for(&frame).unwrap();
+            let image = harness.capture_named("scene").unwrap().data.unwrap();
+            let mut red = 0.0;
+            for y in 116..124 {
+                for x in 156..164 {
+                    red += image[(y * 320 + x) * 4] as f64;
+                }
+            }
+            red / 64.0
+        };
+
+        let ambient_only = render_center_red(&mut harness);
+        assert!(ambient_only > 210.0, "ambient-only red: {ambient_only}");
+
+        harness.runtime.app.light.ambient_brightness = 0.0;
+        let dark = render_center_red(&mut harness);
+        assert!(ambient_only > dark + 80.0);
+
+        harness.runtime.camera.yaw += 0.4;
+        let moved_dark = render_center_red(&mut harness);
+        assert!(ambient_only > moved_dark + 80.0);
+
+        harness.runtime.app.light.directional_illuminance = 10000.0;
+        harness.runtime.app.light.directional_target = glam::Vec3::ZERO;
+        harness.runtime.app.light.directional_position = glam::Vec3::Z;
+        let front_light = render_center_red(&mut harness);
+        harness.runtime.app.light.directional_position = -glam::Vec3::Z;
+        let back_light = render_center_red(&mut harness);
+        assert!(front_light > back_light + 80.0);
+
+        harness.runtime.shutdown();
+    }
 
     #[test]
     #[ignore = "requires native GPU adapter/device and renders real frames"]
