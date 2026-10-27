@@ -1,5 +1,5 @@
 use bytemuck::{Pod, Zeroable};
-use wgpu::util::DeviceExt;
+use mikage::wgpu::{self, util::DeviceExt};
 
 /// GPU上の粒子データ構造（16バイトアライメント）
 #[repr(C)]

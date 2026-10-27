@@ -2,8 +2,8 @@
 //!
 //! Delegates to [`mikage::SolidRenderer`] for pipeline management and drawing.
 
-use glam::{Mat4, Vec3, Vec4};
-use mikage::{SolidObjectId, SolidRenderer};
+use mikage::glam::{self, Mat4, Vec3, Vec4};
+use mikage::{SolidObjectId, SolidRenderer, wgpu};
 
 use crate::simulation::{constants::SimulationConstants, state::SimulationState};
 
@@ -25,18 +25,17 @@ pub struct ContainerRenderer {
 
 impl ContainerRenderer {
     pub fn new(
-        device: &wgpu::Device,
-        surface_format: wgpu::TextureFormat,
+        gpu: &mikage::GpuContext,
+        target: mikage::RenderTargetConfig,
         view_bind_group_layout: &wgpu::BindGroupLayout,
     ) -> Self {
-        let mut solid = SolidRenderer::new(device, surface_format, view_bind_group_layout);
+        let mut solid = SolidRenderer::new(gpu, target, view_bind_group_layout);
 
         let cube = mikage::CubeMesh::generate();
 
-        let mut pieces = [SolidObjectId::default(); NUM_PIECES];
-        for piece in &mut pieces {
-            *piece = solid.add_object(device, &cube.positions, &cube.normals, &cube.indices);
-        }
+        let pieces = std::array::from_fn(|_| {
+            solid.add_object(gpu, &cube.positions, &cube.normals, &cube.indices)
+        });
 
         Self { solid, pieces }
     }
@@ -44,7 +43,7 @@ impl ContainerRenderer {
     /// Update model matrices each frame based on current simulation state.
     pub fn update_transforms(
         &mut self,
-        queue: &wgpu::Queue,
+        gpu: &mikage::GpuContext,
         constants: &SimulationConstants,
         sim_state: &SimulationState,
     ) {
@@ -65,7 +64,7 @@ impl ContainerRenderer {
             floor_translation,
         );
         self.solid.update_object(
-            queue,
+            gpu,
             self.pieces[FLOOR],
             floor_model,
             Vec4::new(0.4, 0.35, 0.3, 0.4),
@@ -87,7 +86,7 @@ impl ContainerRenderer {
             divider_translation,
         );
         self.solid.update_object(
-            queue,
+            gpu,
             self.pieces[DIVIDER],
             divider_model,
             Vec4::new(0.4, 0.4, 0.4, 0.8),
@@ -110,7 +109,7 @@ impl ContainerRenderer {
             front_translation,
         );
         self.solid
-            .update_object(queue, self.pieces[WALL_FRONT], front_model, wall_color);
+            .update_object(gpu, self.pieces[WALL_FRONT], front_model, wall_color);
 
         // Back wall (-Z)
         let back_translation = container.base_position - Vec3::Z * container.half_extents.z;
@@ -120,7 +119,7 @@ impl ContainerRenderer {
             back_translation,
         );
         self.solid
-            .update_object(queue, self.pieces[WALL_BACK], back_model, wall_color);
+            .update_object(gpu, self.pieces[WALL_BACK], back_model, wall_color);
 
         // Left wall (-X)
         let left_translation = container.base_position - Vec3::X * container.half_extents.x;
@@ -132,7 +131,7 @@ impl ContainerRenderer {
         let left_model =
             Mat4::from_scale_rotation_translation(lr_scale, glam::Quat::IDENTITY, left_translation);
         self.solid
-            .update_object(queue, self.pieces[WALL_LEFT], left_model, wall_color);
+            .update_object(gpu, self.pieces[WALL_LEFT], left_model, wall_color);
 
         // Right wall (+X)
         let right_translation = container.base_position + Vec3::X * container.half_extents.x;
@@ -142,7 +141,7 @@ impl ContainerRenderer {
             right_translation,
         );
         self.solid
-            .update_object(queue, self.pieces[WALL_RIGHT], right_model, wall_color);
+            .update_object(gpu, self.pieces[WALL_RIGHT], right_model, wall_color);
     }
 
     /// Render all container pieces. Call this within an active render pass.

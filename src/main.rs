@@ -7,6 +7,7 @@ mod ui;
 
 #[cfg(not(target_family = "wasm"))]
 use clap::Parser;
+use mikage::wgpu;
 use std::path::PathBuf;
 
 use app::GranularClockApp;
@@ -49,11 +50,24 @@ fn run_with_config_path(config_path: Option<PathBuf>) {
     camera.pitch = (diff.y / diff.length()).asin();
 
     mikage::run(
-        move |ctx, size| GranularClockApp::new(loaded, ctx, size),
+        move |ctx, target, size| GranularClockApp::new(loaded, ctx, target, size),
         mikage::RunConfig::with_defaults(camera)
             .with_title("Granular Clock")
-            .with_size(1440, 960),
-    );
+            .with_size(1440, 960)
+            .with_gpu(gpu_descriptor()),
+    )
+    .expect("failed to run Granular Clock");
+}
+
+fn gpu_descriptor() -> mikage::GpuDescriptor {
+    mikage::GpuDescriptor {
+        requirements: mikage::GpuRequirements {
+            // The collision pipeline binds seven storage buffers.
+            required_limits: Some(wgpu::Limits::default()),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
 }
 
 #[cfg(all(test, not(target_family = "wasm")))]

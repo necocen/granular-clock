@@ -1,4 +1,5 @@
 use egui_plot::{Corner, HLine, Legend, Line, Plot};
+use mikage::egui;
 
 use crate::analysis::{CurrentDistribution, DistributionHistory};
 use crate::simulation::{

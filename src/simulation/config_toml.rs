@@ -1,7 +1,7 @@
 use std::fmt::{Display, Formatter};
 use std::path::Path;
 
-use glam::Vec3;
+use mikage::glam::Vec3;
 use serde::Deserialize;
 
 use crate::simulation::constants::{

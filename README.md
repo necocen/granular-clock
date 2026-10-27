@@ -11,7 +11,7 @@ This program uses physics simulation to model the particle dynamics and visualiz
 
 ## Getting Started
 
-Requires Rust (2024 edition or newer).
+Requires Rust 1.95 or newer.
 
 ### Running Locally
 

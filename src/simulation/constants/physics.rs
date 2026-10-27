@@ -1,4 +1,4 @@
-use glam::Vec3;
+use mikage::glam::Vec3;
 
 use super::{config::SimulationConfig, container::ContainerParams};
 

@@ -1,4 +1,4 @@
-use glam::Vec3;
+use mikage::glam::Vec3;
 
 /// Camera initial settings (startup-only)
 #[derive(Clone, Copy, Debug)]

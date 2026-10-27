@@ -1,4 +1,4 @@
-use glam::Vec3;
+use mikage::glam::Vec3;
 
 use crate::simulation::constants::{ContainerParams, WallProperties};
 

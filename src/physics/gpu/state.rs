@@ -12,7 +12,7 @@ use crate::rendering::shaders::physics_shader_processor;
 use crate::rendering::{LARGE_PARTICLE_COLOR, SMALL_PARTICLE_COLOR};
 use crate::simulation::constants::SimulationConstants;
 use bytemuck::{Pod, Zeroable};
-use mikage::{create_compute_pipeline, storage_buffer_entry, uniform_buffer_entry};
+use mikage::{create_compute_pipeline, glam, storage_buffer_entry, uniform_buffer_entry, wgpu};
 
 /// Instance writer パラメータ
 #[repr(C)]
@@ -818,7 +818,9 @@ impl GpuPhysicsState {
         let byte_len = particle_size * num_particles;
 
         let buffer_slice = staging.buffer.slice(0..byte_len as u64);
-        let data = buffer_slice.get_mapped_range();
+        let data = buffer_slice
+            .get_mapped_range()
+            .expect("completed readback buffer should be mapped");
 
         if data.len() >= byte_len {
             let particles: &[ParticleGpu] = bytemuck::cast_slice(&data[..byte_len]);

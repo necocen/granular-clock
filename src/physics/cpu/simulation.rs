@@ -1,4 +1,4 @@
-use glam::Vec3;
+use mikage::glam::Vec3;
 
 use crate::physics::ParticleStore;
 use crate::physics::cpu::contact::{ContactForce, ContactState};

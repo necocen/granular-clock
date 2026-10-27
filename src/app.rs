@@ -1,5 +1,5 @@
 use mikage::winit::dpi::PhysicalSize;
-use mikage::{InstanceData, InstanceRenderer, InstanceRendererConfig, wgpu};
+use mikage::{InstanceData, InstanceRenderer, InstanceRendererConfig, egui, glam, wgpu};
 
 use crate::analysis::{CurrentDistribution, DistributionHistory, update_distribution_plain};
 use crate::physics::{
@@ -19,6 +19,7 @@ struct RenderResources {
     instance_renderer: InstanceRenderer,
     scene: mikage::SceneBinding,
     depth_view: wgpu::TextureView,
+    target_config: mikage::RenderTargetConfig,
     container: ContainerRenderer,
 }
 
@@ -44,7 +45,12 @@ pub struct GranularClockApp {
 }
 
 impl GranularClockApp {
-    pub fn new(loaded: LoadedConfig, ctx: &mikage::GpuContext, size: PhysicalSize<u32>) -> Self {
+    pub fn new(
+        loaded: LoadedConfig,
+        ctx: &mikage::GpuContext,
+        target: mikage::RenderTargetConfig,
+        size: PhysicalSize<u32>,
+    ) -> Self {
         let constants = loaded.simulation;
         let grid_settings = constants.grid;
         let spatial_hash = SpatialHashGrid::new(grid_settings.cell_size, grid_settings.table_size);
@@ -57,13 +63,16 @@ impl GranularClockApp {
         // Create instance renderer with IcoSphere mesh
         let sphere = mikage::IcoSphereMesh::generate(2);
         let mut instance_renderer = InstanceRenderer::new(
-            device,
-            ctx.render_format(),
+            ctx,
+            target,
             scene.layout(),
             &sphere.positions,
             &sphere.normals,
             &sphere.indices,
-            InstanceRendererConfig::default_3d(),
+            InstanceRendererConfig {
+                storage_binding: true,
+                ..InstanceRendererConfig::default_3d()
+            },
         );
 
         // Pre-allocate instance buffer for expected particle count
@@ -71,11 +80,10 @@ impl GranularClockApp {
         instance_renderer.ensure_capacity(device, total_particles);
 
         // Create depth texture
-        let (_depth_texture, depth_view) =
-            mikage::create_depth_texture(device, size, mikage::DEPTH_FORMAT);
+        let (_depth_texture, depth_view) = mikage::create_depth_texture(ctx, size, target);
 
         // Create container renderer (shares the scene bind group layout)
-        let container = ContainerRenderer::new(device, ctx.render_format(), scene.layout());
+        let container = ContainerRenderer::new(ctx, target, scene.layout());
 
         // Create GPU physics state
         let gpu_physics =
@@ -85,6 +93,7 @@ impl GranularClockApp {
             instance_renderer,
             scene,
             depth_view,
+            target_config: target,
             container,
         };
 
@@ -205,7 +214,7 @@ impl GranularClockApp {
         self.contact_history = ContactHistory::default();
         self.particle_store.clear();
         self.spawn_particles();
-        // GPU particles will be re-uploaded in next update
+        // GPU particles will be re-uploaded in the next tick.
         self.gpu_particles_uploaded = false;
     }
 
@@ -233,10 +242,7 @@ impl GranularClockApp {
 impl mikage::App for GranularClockApp {
     type Camera = mikage::OrbitCamera;
 
-    fn update(&mut self, ctx: &mut mikage::UpdateContext<mikage::OrbitCamera>) {
-        // Store dt for UI
-        self.dt = ctx.dt;
-
+    fn tick(&mut self, ctx: &mut mikage::TickContext) {
         // Handle reset request (from UI)
         self.handle_reset();
 
@@ -260,27 +266,18 @@ impl mikage::App for GranularClockApp {
                     &mut self.sim_state,
                     &mut self.spatial_hash,
                 );
-
-                // Build instance data from particles and upload
-                let instances = self.build_instance_data();
-
-                let reallocated = self
-                    .render
-                    .instance_renderer
-                    .ensure_capacity(&ctx.gpu.device, instances.len() as u32);
-                if reallocated {
-                    self.gpu_physics.rebuild_instance_bind_group(
-                        &ctx.gpu.device,
-                        self.render.instance_renderer.instance_buffer(),
-                    );
-                }
-                self.render.instance_renderer.update_instances(
-                    &ctx.gpu.device,
-                    &ctx.gpu.queue,
-                    &instances,
-                );
             }
             PhysicsBackend::Gpu => {
+                let total = self.constants.particle.num_large + self.constants.particle.num_small;
+                let instance_buffer = self
+                    .render
+                    .instance_renderer
+                    .prepare_compute(&ctx.gpu.device, total);
+                if instance_buffer.reallocated {
+                    self.gpu_physics
+                        .rebuild_instance_bind_group(&ctx.gpu.device, instance_buffer.buffer);
+                }
+
                 // Check if we need to upload particles (initial or after reset)
                 let store_gen_changed =
                     self.particle_store.generation != self.last_gpu_store_generation;
@@ -315,17 +312,60 @@ impl mikage::App for GranularClockApp {
                             self.constants.time.dt,
                         );
                     }
+
+                    self.gpu_physics.encode_compute(
+                        &ctx.gpu.device,
+                        &ctx.gpu.queue,
+                        ctx.encoder,
+                        &self.constants,
+                        &self.sim_state,
+                    );
                 }
 
-                // Set instance count for rendering (GPU compute writes instances directly)
-                let total = self.constants.particle.num_large + self.constants.particle.num_small;
-                self.render.instance_renderer.set_instance_count(total);
+                if self.gpu_physics.num_particles() > 0 {
+                    // Keep instance data current even when resetting while paused.
+                    self.gpu_physics.encode_particle_to_instance(
+                        &ctx.gpu.queue,
+                        ctx.encoder,
+                        &self.constants,
+                    );
+                    self.gpu_physics.encode_readback(ctx.encoder);
+                }
             }
         }
 
+        update_distribution_plain(
+            &self.particle_store,
+            &self.constants,
+            &mut self.distribution,
+            &mut self.distribution_history,
+            &self.sim_state,
+        );
+    }
+
+    fn prepare_render(&mut self, ctx: &mut mikage::RenderUpdateContext<mikage::OrbitCamera>) {
+        self.dt = ctx.dt;
+
+        if self.backend == PhysicsBackend::Cpu {
+            let instances = self.build_instance_data();
+            let reallocated = self
+                .render
+                .instance_renderer
+                .ensure_capacity(&ctx.gpu.device, instances.len() as u32);
+            if reallocated {
+                self.gpu_physics.rebuild_instance_bind_group(
+                    &ctx.gpu.device,
+                    self.render.instance_renderer.instance_buffer(),
+                );
+            }
+            self.render
+                .instance_renderer
+                .update_instances(ctx.gpu, &instances);
+        }
+
         // Update view uniform from camera
-        let aspect = if ctx.window_size.height > 0 {
-            ctx.window_size.width as f32 / ctx.window_size.height as f32
+        let aspect = if ctx.target_size.height > 0 {
+            ctx.target_size.width as f32 / ctx.target_size.height as f32
         } else {
             1.0
         };
@@ -336,62 +376,24 @@ impl mikage::App for GranularClockApp {
         // Update container transforms
         self.render
             .container
-            .update_transforms(&ctx.gpu.queue, &self.constants, &self.sim_state);
-
-        // Update distribution
-        update_distribution_plain(
-            &self.particle_store,
-            &self.constants,
-            &mut self.distribution,
-            &mut self.distribution_history,
-            &self.sim_state,
-        );
+            .update_transforms(ctx.gpu, &self.constants, &self.sim_state);
     }
 
-    fn encode(&mut self, ctx: &mut mikage::FrameContext<mikage::OrbitCamera>) {
-        // Compute (GPU physics)
-        if self.backend == PhysicsBackend::Gpu
-            && !self.sim_state.paused
-            && self.gpu_physics.num_particles() > 0
-        {
-            // Encode physics compute passes
-            self.gpu_physics.encode_compute(
-                &ctx.gpu.device,
-                &ctx.gpu.queue,
-                ctx.encoder,
-                &self.constants,
-                &self.sim_state,
-            );
-
-            // Encode particle_to_instance compute pass
-            self.gpu_physics.encode_particle_to_instance(
-                &ctx.gpu.queue,
-                ctx.encoder,
-                &self.constants,
-            );
-
-            // Encode readback (copies to staging buffer every N frames)
-            self.gpu_physics.encode_readback(ctx.encoder);
-        }
-
+    fn render(&mut self, ctx: &mut mikage::RenderContext<mikage::OrbitCamera>) {
         // Render
+        let color_attachment = ctx.color_attachment(wgpu::Operations {
+            load: wgpu::LoadOp::Clear(wgpu::Color {
+                // #1a1a2e in linear space
+                r: 0.0088,
+                g: 0.0088,
+                b: 0.025,
+                a: 1.0,
+            }),
+            store: wgpu::StoreOp::Store,
+        });
         let mut pass = ctx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("main_render_pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: ctx.surface_view,
-                resolve_target: None,
-                depth_slice: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        // #1a1a2e in linear space
-                        r: 0.0088,
-                        g: 0.0088,
-                        b: 0.025,
-                        a: 1.0,
-                    }),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
+            color_attachments: &[Some(color_attachment)],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: &self.render.depth_view,
                 depth_ops: Some(wgpu::Operations {
@@ -402,6 +404,7 @@ impl mikage::App for GranularClockApp {
             }),
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
 
         // Draw particles (opaque, instanced)
@@ -413,7 +416,8 @@ impl mikage::App for GranularClockApp {
         self.render.container.render(&mut pass);
     }
 
-    fn gui(&mut self, egui_ctx: &egui::Context) {
+    fn gui(&mut self, ui: &mut egui::Ui) {
+        let egui_ctx = ui.ctx();
         draw_control_panel(
             egui_ctx,
             self.dt,
@@ -429,7 +433,77 @@ impl mikage::App for GranularClockApp {
 
     fn resize(&mut self, ctx: &mikage::GpuContext, new_size: PhysicalSize<u32>) {
         let (_depth_texture, depth_view) =
-            mikage::create_depth_texture(&ctx.device, new_size, mikage::DEPTH_FORMAT);
+            mikage::create_depth_texture(ctx, new_size, self.render.target_config);
         self.render.depth_view = depth_view;
+    }
+}
+
+#[cfg(all(test, not(target_family = "wasm")))]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    #[ignore = "requires native GPU adapter/device and renders real frames"]
+    fn lifecycle_runs_both_backends_without_ticking_during_render() {
+        let mut loaded = crate::simulation::config_toml::load_embedded_config();
+        loaded.simulation.particle.num_large = 2;
+        loaded.simulation.particle.num_small = 2;
+        loaded.simulation.settings.substeps_per_frame = 2;
+        let elapsed_per_tick = loaded.simulation.time.dt as f64 * 2.0;
+        let mut harness = pollster::block_on(mikage::HeadlessHarness::new(
+            crate::gpu_descriptor(),
+            mikage::RenderTargetConfig::default(),
+            PhysicalSize::new(320, 240),
+            mikage::OrbitCamera::default(),
+            move |gpu, target, size| GranularClockApp::new(loaded, gpu, target, size),
+        ))
+        .expect("initialize headless app");
+        let dt = Duration::from_secs_f32(1.0 / 60.0);
+
+        let tick = harness.advance_ticks(1, dt).unwrap().unwrap();
+        harness.runtime.wait_for(&tick).unwrap();
+        assert_eq!(harness.runtime.app.sim_state.elapsed, elapsed_per_tick);
+
+        let frame = harness.render_once().unwrap();
+        harness.runtime.wait_for(&frame).unwrap();
+        let image = harness.capture_named("scene").unwrap().data.unwrap();
+        assert_eq!(image.len(), 320 * 240 * 4);
+        assert!(image.chunks_exact(4).any(|pixel| pixel != &image[..4]));
+        assert_eq!(harness.runtime.app.sim_state.elapsed, elapsed_per_tick);
+
+        harness.runtime.app.sim_state.paused = true;
+        let tick = harness.advance_ticks(1, dt).unwrap().unwrap();
+        harness.runtime.wait_for(&tick).unwrap();
+        assert_eq!(harness.runtime.app.sim_state.elapsed, elapsed_per_tick);
+
+        let generation = harness.runtime.app.particle_store.generation;
+        harness.runtime.app.sim_state.reset_requested = true;
+        let tick = harness.advance_ticks(1, dt).unwrap().unwrap();
+        harness.runtime.wait_for(&tick).unwrap();
+        assert_eq!(harness.runtime.app.sim_state.elapsed, 0.0);
+        assert!(harness.runtime.app.particle_store.generation > generation);
+        let frame = harness.render_once().unwrap();
+        harness.runtime.wait_for(&frame).unwrap();
+
+        harness.runtime.app.backend = PhysicsBackend::Cpu;
+        harness.runtime.app.sim_state.paused = false;
+        let tick = harness.advance_ticks(1, dt).unwrap().unwrap();
+        harness.runtime.wait_for(&tick).unwrap();
+        assert_eq!(harness.runtime.app.sim_state.elapsed, elapsed_per_tick);
+        let frame = harness.render_once().unwrap();
+        harness.runtime.wait_for(&frame).unwrap();
+        assert_eq!(harness.runtime.app.sim_state.elapsed, elapsed_per_tick);
+
+        harness.runtime.app.backend = PhysicsBackend::Gpu;
+        let tick = harness.advance_ticks(1, dt).unwrap().unwrap();
+        harness.runtime.wait_for(&tick).unwrap();
+        assert_eq!(
+            harness.runtime.app.sim_state.elapsed,
+            elapsed_per_tick * 2.0
+        );
+        let frame = harness.render_once().unwrap();
+        harness.runtime.wait_for(&frame).unwrap();
+        harness.runtime.shutdown();
     }
 }

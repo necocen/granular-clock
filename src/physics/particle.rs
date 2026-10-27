@@ -1,4 +1,4 @@
-use glam::Vec3;
+use mikage::glam::Vec3;
 use std::f32::consts::PI;
 
 /// 粒子のサイズ区分（大/小）
