@@ -192,9 +192,6 @@ pub struct GpuPhysicsBuffers {
     pub num_particles: u32,
     /// バッファ容量（粒子スロット数）
     pub capacity: u32,
-    /// 最後にアップロードしたデータ世代
-    #[allow(dead_code)]
-    pub last_uploaded_generation: u64,
 }
 
 impl GpuPhysicsBuffers {
@@ -289,7 +286,6 @@ impl GpuPhysicsBuffers {
             sort_params_capacity_passes,
             num_particles,
             capacity: num_particles,
-            last_uploaded_generation: 0,
         }
     }
 

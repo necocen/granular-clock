@@ -25,15 +25,6 @@ impl Default for OscillationParams {
     }
 }
 
-impl OscillationParams {
-    /// 最大加速度を計算 (m/s²)
-    #[allow(dead_code)]
-    pub fn max_acceleration(&self) -> f32 {
-        use std::f32::consts::PI;
-        self.amplitude * (2.0 * PI * self.frequency).powi(2)
-    }
-}
-
 /// 1 サブステップあたりの位相増分を返す。
 pub fn oscillation_phase_step(frequency: f32, dt: f32) -> f32 {
     frequency * TWO_PI * dt

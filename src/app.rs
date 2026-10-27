@@ -237,7 +237,6 @@ impl GranularClockApp {
             device,
             queue,
             &gpu_particles,
-            generation,
             self.render.instance_renderer.instance_buffer(),
         );
         self.last_gpu_store_generation = generation;

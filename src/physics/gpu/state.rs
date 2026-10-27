@@ -89,8 +89,6 @@ pub struct GpuPhysicsState {
     readback_interval: u32,
     last_readback_frame: u64,
 
-    // Data generation tracking
-    last_uploaded_generation: u64,
     /// bind group 再構築が必要か
     needs_bind_group_rebuild: bool,
 }
@@ -204,7 +202,6 @@ impl GpuPhysicsState {
             readback_frame: Arc::new(std::sync::RwLock::new(0)),
             readback_interval: 4,
             last_readback_frame: 0,
-            last_uploaded_generation: 0,
             needs_bind_group_rebuild: true,
         }
     }
@@ -215,7 +212,6 @@ impl GpuPhysicsState {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         particles: &[ParticleGpu],
-        generation: u64,
         instance_buffer: &wgpu::Buffer,
     ) {
         if particles.is_empty() {
@@ -257,7 +253,6 @@ impl GpuPhysicsState {
         queue.write_buffer(&self.buffers.particles_a, 0, particle_bytes);
         queue.write_buffer(&self.buffers.particles_b, 0, particle_bytes);
         self.buffers.num_particles = num_particles;
-        self.last_uploaded_generation = generation;
         self.needs_bind_group_rebuild = true;
 
         // Instance writer bind group も再構築
@@ -893,12 +888,6 @@ impl GpuPhysicsState {
                     },
                 ],
             }));
-    }
-
-    /// 最後にアップロードした世代番号
-    #[allow(dead_code)]
-    pub fn last_uploaded_generation(&self) -> u64 {
-        self.last_uploaded_generation
     }
 
     /// 粒子数
