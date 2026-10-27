@@ -13,7 +13,7 @@ impl Default for CameraSettings {
     fn default() -> Self {
         Self {
             position: Vec3::new(0.65, 0.5, 0.65),
-            target: Vec3::new(0.0, 0.075, 0.0),
+            target: Vec3::ZERO,
         }
     }
 }
