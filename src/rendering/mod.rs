@@ -5,4 +5,4 @@ pub mod shaders;
 
 pub use container::ContainerRenderer;
 pub use instance_data::*;
-pub use lighting::scene_uniform;
+pub use lighting::scene_lighting;

@@ -3,7 +3,7 @@
 //! Delegates to [`mikage::SolidRenderer`] for pipeline management and drawing.
 
 use mikage::glam::{self, Mat4, Vec3, Vec4};
-use mikage::{SolidObjectId, SolidRenderer, wgpu};
+use mikage::{SolidObjectId, SolidRenderer, SolidShading, wgpu};
 
 use crate::simulation::{constants::SimulationConstants, state::SimulationState};
 
@@ -34,7 +34,9 @@ impl ContainerRenderer {
         let cube = mikage::CubeMesh::generate();
 
         let pieces = std::array::from_fn(|_| {
-            solid.add_object(gpu, &cube.positions, &cube.normals, &cube.indices)
+            let id = solid.add_object(gpu, &cube.positions, &cube.normals, &cube.indices);
+            solid.set_shading(id, SolidShading::Lit);
+            id
         });
 
         Self { solid, pieces }

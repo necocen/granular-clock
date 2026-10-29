@@ -75,9 +75,9 @@ position = [0.25, 0.3, 0.85]
 target = [0.0, 0.0, 0.0]
 
 [ui.light]
-# Relative ambient/directional weights for mikage's normalized Lambert lighting.
-# Ambient fraction = ambient_brightness / (ambient_brightness + directional_illuminance).
-# Set both weights to zero for no illumination (particles render black).
+# Independent ambient/directional intensities in legacy config units (not lux).
+# Each value / 10500 is a unitless linear gain; zero disables that light.
+# The fixed conversion preserves the previous default brightness.
 ambient_brightness = 500.0
 directional_illuminance = 10000.0
 # Light direction is from directional_target toward directional_position.

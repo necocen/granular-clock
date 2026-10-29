@@ -21,9 +21,9 @@ impl Default for CameraSettings {
 /// Scene light initial settings (startup-only)
 #[derive(Clone, Copy, Debug)]
 pub struct LightSettings {
-    /// Ambient light weight, relative to directional_illuminance.
+    /// Ambient light intensity in legacy config units (10500 = unit gain).
     pub ambient_brightness: f32,
-    /// Directional light weight, relative to ambient_brightness.
+    /// Directional light intensity in legacy config units (10500 = unit gain).
     pub directional_illuminance: f32,
     /// Directional light position
     pub directional_position: Vec3,

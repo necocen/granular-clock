@@ -1,35 +1,26 @@
-use mikage::{Camera, SceneUniform};
+use mikage::SceneLighting;
 
 use crate::simulation::constants::LightSettings;
 
-/// Map the configured light weights to mikage's normalized Lambert lighting.
-pub fn scene_uniform(camera: &impl Camera, aspect: f32, light: &LightSettings) -> SceneUniform {
-    // Sum in f64 so even large, finite configuration values stay finite.
-    let total = light.ambient_brightness as f64 + light.directional_illuminance as f64;
-    let ambient = if total > 0.0 {
-        (light.ambient_brightness as f64 / total) as f32
-    } else {
-        0.0
-    };
-    let mut uniform = SceneUniform::with_light(
-        camera.view_projection_matrix(aspect),
-        camera.position(),
-        light.directional_position - light.directional_target,
-        ambient,
-    );
-    if light.directional_illuminance == 0.0 {
-        uniform.light_dir = [0.0; 4];
+/// Convert the legacy configuration units to independent, unitless light gains.
+pub fn scene_lighting(light: &LightSettings) -> SceneLighting {
+    // Preserve the previous default gains (500 / 10500 and 10000 / 10500).
+    // This is a fixed scale: changing one light no longer changes the other.
+    const LIGHT_UNITS_PER_GAIN: f32 = 10500.0;
+    SceneLighting {
+        direction: light.directional_position - light.directional_target,
+        ambient_intensity: light.ambient_brightness / LIGHT_UNITS_PER_GAIN,
+        directional_intensity: light.directional_illuminance / LIGHT_UNITS_PER_GAIN,
     }
-    uniform
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mikage::{OrbitCamera, glam::Vec3};
+    use mikage::glam::Vec3;
 
     #[test]
-    fn configured_direction_and_relative_brightness_are_used() {
+    fn configured_direction_and_default_brightness_are_preserved() {
         let light = LightSettings {
             ambient_brightness: 500.0,
             directional_illuminance: 10000.0,
@@ -37,42 +28,64 @@ mod tests {
             directional_target: Vec3::new(3.0, 3.0, 7.0),
             ..Default::default()
         };
-        let mut camera = OrbitCamera::default();
-        let first = scene_uniform(&camera, 1.5, &light);
-        assert_eq!(first.light_dir, [0.0, 1.0, 0.0, 0.0]);
-        assert!((first.ambient[0] - 500.0 / 10500.0).abs() < 1e-6);
-
-        camera.yaw += 0.5;
-        let moved = scene_uniform(&camera, 1.5, &light);
-        assert_ne!(first.view_proj, moved.view_proj);
-        assert_eq!(first.light_dir, moved.light_dir);
-        assert_eq!(first.ambient, moved.ambient);
+        let lighting = scene_lighting(&light);
+        assert_eq!(lighting.direction, Vec3::new(0.0, 2.0, 0.0));
+        assert_eq!(lighting.ambient_intensity, 500.0 / 10500.0);
+        assert_eq!(lighting.directional_intensity, 10000.0 / 10500.0);
     }
 
     #[test]
     fn lights_can_be_disabled_independently_or_together() {
-        for (ambient, directional, expected_ambient) in
-            [(500.0, 0.0, 1.0), (0.0, 10000.0, 0.0), (0.0, 0.0, 0.0)]
-        {
+        for (ambient, directional) in [(500.0, 0.0), (0.0, 10000.0), (0.0, 0.0)] {
             let light = LightSettings {
                 ambient_brightness: ambient,
                 directional_illuminance: directional,
                 ..Default::default()
             };
-            let uniform = scene_uniform(&OrbitCamera::default(), 1.0, &light);
-            assert_eq!(uniform.ambient[0], expected_ambient);
-            assert_eq!(uniform.light_dir == [0.0; 4], directional == 0.0);
+            let lighting = scene_lighting(&light);
+            assert_eq!(lighting.ambient_intensity, ambient / 10500.0);
+            assert_eq!(lighting.directional_intensity, directional / 10500.0);
         }
     }
 
     #[test]
-    fn large_light_weights_do_not_overflow() {
+    fn light_intensities_scale_independently() {
+        let mut light = LightSettings::default();
+        let original = scene_lighting(&light);
+        light.ambient_brightness *= 2.0;
+        let ambient_changed = scene_lighting(&light);
+        assert_eq!(
+            ambient_changed.ambient_intensity,
+            original.ambient_intensity * 2.0
+        );
+        assert_eq!(
+            ambient_changed.directional_intensity,
+            original.directional_intensity
+        );
+
+        light.directional_illuminance *= 2.0;
+        let both_changed = scene_lighting(&light);
+        assert_eq!(
+            both_changed.ambient_intensity,
+            original.ambient_intensity * 2.0
+        );
+        assert_eq!(
+            both_changed.directional_intensity,
+            original.directional_intensity * 2.0
+        );
+    }
+
+    #[test]
+    fn large_light_values_remain_finite() {
         let light = LightSettings {
             ambient_brightness: f32::MAX,
             directional_illuminance: f32::MAX,
             ..Default::default()
         };
-        let uniform = scene_uniform(&OrbitCamera::default(), 1.0, &light);
-        assert_eq!(uniform.ambient[0], 0.5);
+        let lighting = scene_lighting(&light);
+        assert!(lighting.ambient_intensity.is_finite());
+        assert!(lighting.directional_intensity.is_finite());
+        assert!(lighting.ambient_intensity > 1.0);
+        assert!(lighting.directional_intensity > 1.0);
     }
 }
