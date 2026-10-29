@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use mikage::glam::Vec3;
 
 use crate::physics::ParticleStore;
 use crate::physics::cpu::contact::{ContactForce, ContactState};
@@ -220,24 +220,20 @@ fn clamp_particles(
     });
 }
 
-/// 物理サブステップを実行するシステム（exclusive system）
-pub fn run_physics_substeps(world: &mut World) {
+/// 物理サブステップを実行する（純粋関数版）
+pub fn run_physics_substeps_plain(
+    constants: &SimulationConstants,
+    particles: &mut ParticleStore,
+    contact_history: &mut ContactHistory,
+    sim_state: &mut SimulationState,
+    grid: &mut SpatialHashGrid,
+) {
     // 一時停止中なら何もしない
-    let paused = world.resource::<SimulationState>().paused;
-    if paused {
+    if sim_state.paused {
         return;
     }
 
-    let constants = world.resource::<SimulationConstants>().clone();
     let substeps = constants.settings.substeps_per_frame;
-
-    // リソースを一括取り出し（exclusive system なので安全）
-    let mut particles = world.remove_resource::<ParticleStore>().unwrap();
-    let mut contact_history = world.remove_resource::<ContactHistory>().unwrap();
-    let mut sim_state = world.remove_resource::<SimulationState>().unwrap();
-    let mut grid = world.remove_resource::<SpatialHashGrid>().unwrap();
-
-    // 不変リソースはコピー（Copy 型なので安全かつ参照の衝突を回避）
     let material = constants.material;
     let physics = constants.physics;
     let wall_props = constants.wall;
@@ -246,37 +242,31 @@ pub fn run_physics_substeps(world: &mut World) {
     let dt = constants.time.dt;
 
     for _ in 0..substeps {
-        advance_oscillation(&mut sim_state, osc_params, dt);
-        build_spatial_grid(&mut grid, &particles);
-        clear_forces(&mut particles);
-        compute_particle_collisions(&mut particles, &grid, &mut contact_history, &material, dt);
+        advance_oscillation(sim_state, osc_params, dt);
+        build_spatial_grid(grid, particles);
+        clear_forces(particles);
+        compute_particle_collisions(particles, grid, contact_history, &material, dt);
         compute_wall_collisions(
-            &mut particles,
+            particles,
             container_params,
             sim_state.container_offset,
             &wall_props,
         );
-        integrate_positions(&mut particles, &physics, dt);
-        clamp_particles(&mut particles, container_params, sim_state.container_offset);
+        integrate_positions(particles, &physics, dt);
+        clamp_particles(particles, container_params, sim_state.container_offset);
         // 後半ステップの力計算は更新後の位置に対して行う
-        build_spatial_grid(&mut grid, &particles);
-        clear_forces(&mut particles);
-        compute_particle_collisions(&mut particles, &grid, &mut contact_history, &material, dt);
+        build_spatial_grid(grid, particles);
+        clear_forces(particles);
+        compute_particle_collisions(particles, grid, contact_history, &material, dt);
         compute_wall_collisions(
-            &mut particles,
+            particles,
             container_params,
             sim_state.container_offset,
             &wall_props,
         );
-        integrate_velocities(&mut particles, &physics, dt);
-        clamp_particles(&mut particles, container_params, sim_state.container_offset);
+        integrate_velocities(particles, &physics, dt);
+        clamp_particles(particles, container_params, sim_state.container_offset);
         contact_history.cleanup();
         sim_state.step_time(dt);
     }
-
-    // リソースを戻す
-    world.insert_resource(particles);
-    world.insert_resource(contact_history);
-    world.insert_resource(sim_state);
-    world.insert_resource(grid);
 }

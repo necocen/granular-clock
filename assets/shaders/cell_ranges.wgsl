@@ -1,7 +1,7 @@
 // セル範囲構築シェーダー
 // ソート済みの keys 配列から各セルの開始・終了インデックスを計算
 
-#import granular_clock::physics_types::{Particle, Params, grid_num_cells}
+#import granular_clock::physics_types
 
 @group(0) @binding(0) var<uniform> params: Params;
 @group(1) @binding(0) var<storage, read_write> keys: array<u32>;

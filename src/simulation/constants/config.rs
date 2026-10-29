@@ -1,7 +1,5 @@
-use bevy::prelude::*;
-
 /// シミュレーションの設定
-#[derive(Resource, Clone)]
+#[derive(Clone)]
 pub struct SimulationConfig {
     /// 大粒子の半径
     pub large_radius: f32,

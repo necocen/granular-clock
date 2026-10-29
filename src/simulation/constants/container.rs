@@ -1,7 +1,7 @@
-use bevy::prelude::*;
+use mikage::glam::Vec3;
 
 /// コンテナの不変パラメータ
-#[derive(Resource, Clone)]
+#[derive(Clone)]
 pub struct ContainerParams {
     /// 箱の半分のサイズ
     pub half_extents: Vec3,

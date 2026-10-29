@@ -1,14 +1,7 @@
-use bevy::prelude::*;
-use bevy_egui::{
-    EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPostUpdateSet, EguiPrimaryContextPass, egui,
-    input::EguiWantsInput,
-};
-use bevy_panorbit_camera::PanOrbitCamera;
 use egui_plot::{Corner, HLine, Legend, Line, Plot};
+use mikage::egui;
 
 use crate::analysis::{CurrentDistribution, DistributionHistory};
-use crate::physics::{ParticleSize, ParticleStore};
-use crate::rendering::MainCamera;
 use crate::simulation::{
     constants::{PhysicsBackend, SimulationConstants, UiControlRanges},
     state::SimulationState,
@@ -32,10 +25,10 @@ const COLOR_ACCENT: egui::Color32 = egui::Color32::from_rgb(128, 210, 255);
 const COLOR_RESET: egui::Color32 = egui::Color32::from_rgb(178, 72, 72);
 const PERF_SMOOTHING_TAU_SEC: f32 = 0.6;
 
-#[derive(Resource, Default)]
-struct PerfDisplayState {
-    smoothed_fps: Option<f32>,
-    smoothed_steps_per_sec: Option<f32>,
+#[derive(Default)]
+pub struct PerfDisplayState {
+    pub smoothed_fps: Option<f32>,
+    pub smoothed_steps_per_sec: Option<f32>,
 }
 
 #[derive(Clone, Copy)]
@@ -62,12 +55,8 @@ fn ui_layout_profile(ctx: &egui::Context) -> UiLayoutProfile {
     if mobile {
         UiLayoutProfile {
             mobile: true,
-            control_width: (width - 20.0)
-                .min(MOBILE_CONTROL_WINDOW_MAX_WIDTH)
-                .max(220.0),
-            distribution_width: (width - 20.0)
-                .min(MOBILE_DISTRIBUTION_WINDOW_MAX_WIDTH)
-                .max(240.0),
+            control_width: (width - 20.0).clamp(220.0, MOBILE_CONTROL_WINDOW_MAX_WIDTH),
+            distribution_width: (width - 20.0).clamp(240.0, MOBILE_DISTRIBUTION_WINDOW_MAX_WIDTH),
             plot_height: MOBILE_PLOT_HEIGHT,
             item_spacing: egui::vec2(6.0, 6.0),
             control_offset: egui::vec2(-8.0, 8.0),
@@ -143,39 +132,16 @@ fn status_chip(ui: &mut egui::Ui, text: &str, color: egui::Color32) {
     });
 }
 
-pub struct UiPlugin;
-
-impl Plugin for UiPlugin {
-    fn build(&self, app: &mut App) {
-        app.insert_resource(EguiGlobalSettings {
-            // Primary context is explicitly attached to MainCamera.
-            auto_create_primary_context: false,
-            ..default()
-        })
-        .insert_resource(PerfDisplayState::default())
-        .add_plugins(EguiPlugin::default())
-        .add_systems(
-            EguiPrimaryContextPass,
-            (draw_control_panel_egui, draw_distribution_panel_egui),
-        )
-        .add_systems(Update, apply_reset_request)
-        .add_systems(
-            PostUpdate,
-            sync_orbit_camera_input_lock.after(EguiPostUpdateSet::ProcessOutput),
-        );
-    }
-}
-
-fn draw_control_panel_egui(
-    mut contexts: EguiContexts,
-    time: Res<Time>,
-    mut perf_display: ResMut<PerfDisplayState>,
-    mut constants: ResMut<SimulationConstants>,
-    ui_ranges: Res<UiControlRanges>,
-    mut backend: ResMut<PhysicsBackend>,
-    mut sim_state: ResMut<SimulationState>,
-) -> Result {
-    let ctx = contexts.ctx_mut()?;
+/// Draw the Simulation Settings control panel.
+pub fn draw_control_panel(
+    ctx: &egui::Context,
+    dt: f32,
+    perf_display: &mut PerfDisplayState,
+    constants: &mut SimulationConstants,
+    ui_ranges: &UiControlRanges,
+    backend: &mut PhysicsBackend,
+    sim_state: &mut SimulationState,
+) {
     let layout = ui_layout_profile(ctx);
 
     egui::Window::new(egui::RichText::new("Simulation Settings").strong())
@@ -202,7 +168,6 @@ fn draw_control_panel_egui(
                             .color(egui::Color32::WHITE)
                             .strong(),
                     );
-                    let dt = time.delta_secs();
                     if dt > 0.0 && dt.is_finite() {
                         let fps_instant = 1.0 / dt;
                         let steps_instant =
@@ -427,16 +392,14 @@ fn draw_control_panel_egui(
                     .color(egui::Color32::from_gray(165)),
             );
         });
-
-    Ok(())
 }
 
-fn draw_distribution_panel_egui(
-    mut contexts: EguiContexts,
-    current: Res<CurrentDistribution>,
-    history: Res<DistributionHistory>,
-) -> Result {
-    let ctx = contexts.ctx_mut()?;
+/// Draw the Particle Distribution panel.
+pub fn draw_distribution_panel(
+    ctx: &egui::Context,
+    current: &CurrentDistribution,
+    history: &DistributionHistory,
+) {
     let layout = ui_layout_profile(ctx);
 
     let large_total = current.total_large();
@@ -543,69 +506,4 @@ fn draw_distribution_panel_egui(
                     });
             });
         });
-
-    Ok(())
-}
-
-fn apply_reset_request(
-    mut sim_state: ResMut<SimulationState>,
-    constants: Res<SimulationConstants>,
-    mut store: ResMut<ParticleStore>,
-    mut history: ResMut<DistributionHistory>,
-) {
-    if !sim_state.reset_requested {
-        return;
-    }
-
-    sim_state.reset_requested = false;
-    sim_state.reset_time();
-    history.clear();
-
-    store.clear();
-
-    use rand::Rng;
-    let mut rng = rand::rng();
-    let particle = &constants.particle;
-    let container = &constants.container;
-    let material = &constants.material;
-
-    let spawn_area_x = container.half_extents.x - particle.large_radius;
-    let spawn_area_z = container.half_extents.z - particle.large_radius;
-    let base_y = container.base_position.y - container.half_extents.y;
-
-    for _ in 0..particle.num_large {
-        let x = rng.random_range(-spawn_area_x..spawn_area_x);
-        let z = rng.random_range(-spawn_area_z..spawn_area_z);
-        let y = base_y + particle.large_radius + rng.random_range(0.0..0.2);
-
-        store.spawn(
-            Vec3::new(x, y, z),
-            particle.large_radius,
-            material.density,
-            ParticleSize::Large,
-        );
-    }
-
-    for _ in 0..particle.num_small {
-        let x = rng.random_range(-spawn_area_x..spawn_area_x);
-        let z = rng.random_range(-spawn_area_z..spawn_area_z);
-        let y = base_y + particle.small_radius + rng.random_range(0.0..0.2);
-
-        store.spawn(
-            Vec3::new(x, y, z),
-            particle.small_radius,
-            material.density,
-            ParticleSize::Small,
-        );
-    }
-}
-
-fn sync_orbit_camera_input_lock(
-    egui_wants_input: Res<EguiWantsInput>,
-    mut cameras: Query<&mut PanOrbitCamera, With<MainCamera>>,
-) {
-    let enabled = !egui_wants_input.wants_any_input();
-    for mut camera in &mut cameras {
-        camera.enabled = enabled;
-    }
 }

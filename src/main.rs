@@ -1,5 +1,5 @@
 mod analysis;
-mod debug;
+mod app;
 mod physics;
 mod rendering;
 mod simulation;
@@ -7,30 +7,11 @@ mod ui;
 
 #[cfg(not(target_family = "wasm"))]
 use clap::Parser;
+use mikage::wgpu;
 use std::path::PathBuf;
 
-#[cfg(target_family = "wasm")]
-use bevy::asset::{AssetMetaCheck, AssetPlugin};
-#[cfg(target_family = "wasm")]
-use bevy::log::LogPlugin;
-use bevy::prelude::*;
-
-use analysis::{CurrentDistribution, DistributionHistory, update_distribution};
-// use debug::debug_particles; // 必要時のみ有効化
-use physics::{
-    ContactHistory, ParticleStore,
-    cpu::{InstanceCpuWriterPlugin, run_physics_substeps},
-    gpu::{GpuInstanceWriterPlugin, GpuPhysicsPlugin, apply_gpu_results},
-    init_spatial_hash_grid,
-};
-use rendering::{
-    GpuInstancingPlugin, RenderExtractResourcesPlugin, camera_plugin, is_cpu_backend,
-    is_gpu_backend, setup_camera, setup_rendering, spawn_particles, update_container_transforms,
-};
-use simulation::{
-    config_toml::resolve_startup_config, constants::PhysicsBackend, state::SimulationState,
-};
-use ui::UiPlugin;
+use app::GranularClockApp;
+use simulation::config_toml::resolve_startup_config;
 
 #[cfg(not(target_family = "wasm"))]
 #[derive(Debug, Parser)]
@@ -38,77 +19,6 @@ use ui::UiPlugin;
 struct CliArgs {
     #[arg(long, value_name = "PATH")]
     config: Option<PathBuf>,
-}
-
-fn run_with_config_path(config_path: Option<PathBuf>) {
-    let loaded = resolve_startup_config(config_path.as_deref());
-
-    let primary_window = Window {
-        title: "Granular Clock".into(),
-        resolution: (1440u32, 960u32).into(),
-        #[cfg(target_family = "wasm")]
-        fit_canvas_to_parent: true,
-        ..default()
-    };
-
-    let default_plugins = DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(primary_window),
-        ..default()
-    });
-
-    #[cfg(target_family = "wasm")]
-    let default_plugins = default_plugins
-        .disable::<LogPlugin>() // ChromeではLogPluginが原因でGCが過剰に走るため、wasmビルドでは無効化する
-        .set(AssetPlugin {
-            meta_check: AssetMetaCheck::Never,
-            ..default()
-        });
-
-    let mut app = App::new();
-    app.add_plugins(default_plugins)
-        .add_plugins(camera_plugin())
-        // Shared (CPU/GPU 共通): Main→Render 抽出
-        .add_plugins(RenderExtractResourcesPlugin)
-        // GPU physics / GPU instance write
-        .add_plugins(GpuPhysicsPlugin)
-        .add_plugins(GpuInstanceWriterPlugin)
-        // CPU instance write
-        .add_plugins(InstanceCpuWriterPlugin)
-        // Shared particle draw path
-        .add_plugins(GpuInstancingPlugin)
-        // UI
-        .add_plugins(UiPlugin)
-        // リソース
-        .insert_resource(loaded.simulation)
-        .insert_resource(loaded.ui_ranges)
-        .insert_resource(loaded.camera)
-        .insert_resource(loaded.light)
-        .insert_resource(PhysicsBackend::default())
-        .insert_resource(ContactHistory::default())
-        .insert_resource(DistributionHistory::default())
-        .insert_resource(CurrentDistribution::default())
-        .insert_resource(SimulationState::default())
-        .insert_resource(ParticleStore::default())
-        // スタートアップシステム（カメラはPreStartupで先に生成）
-        .add_systems(PreStartup, setup_camera)
-        .add_systems(PreStartup, init_spatial_hash_grid)
-        .add_systems(Startup, setup_rendering)
-        .add_systems(Startup, spawn_particles.after(setup_rendering))
-        // 物理サブステップ（CPU物理）
-        .add_systems(Update, run_physics_substeps.run_if(is_cpu_backend))
-        // GPU 物理結果の適用
-        .add_systems(Update, apply_gpu_results.run_if(is_gpu_backend))
-        .add_systems(Update, update_container_transforms)
-        .add_systems(Update, update_distribution)
-        // デバッグ出力は必要時のみ有効化
-        // .add_systems(Update, debug_particles)
-        ;
-
-    for warning in loaded.warnings {
-        warn!("{warning}");
-    }
-
-    app.run();
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -120,6 +30,46 @@ fn main() {
 #[cfg(target_family = "wasm")]
 fn main() {
     run_with_config_path(None);
+}
+
+fn run_with_config_path(config_path: Option<PathBuf>) {
+    let loaded = resolve_startup_config(config_path.as_deref());
+
+    // Create OrbitCamera from CameraSettings
+    let mut camera = mikage::OrbitCamera::default();
+    let cam_pos = loaded.camera.position;
+    let cam_target = loaded.camera.target;
+    let diff = cam_pos - cam_target;
+    camera.target = cam_target;
+    camera.distance = diff.length();
+    camera.yaw = diff.x.atan2(diff.z);
+    camera.pitch = (diff.y / diff.length()).asin();
+
+    mikage::run(
+        move |ctx, target, size| {
+            // mikage initializes logging before calling the app factory.
+            for warning in &loaded.warnings {
+                tracing::warn!("{warning}");
+            }
+            GranularClockApp::new(loaded, ctx, target, size)
+        },
+        mikage::RunConfig::with_defaults(camera)
+            .with_title("Granular Clock")
+            .with_size(1440, 960)
+            .with_gpu(gpu_descriptor()),
+    )
+    .expect("failed to run Granular Clock");
+}
+
+fn gpu_descriptor() -> mikage::GpuDescriptor {
+    mikage::GpuDescriptor {
+        requirements: mikage::GpuRequirements {
+            // The collision pipeline binds seven storage buffers.
+            required_limits: Some(wgpu::Limits::default()),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
 }
 
 #[cfg(all(test, not(target_family = "wasm")))]

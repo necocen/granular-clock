@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use mikage::glam::Vec3;
 use std::f32::consts::PI;
 
 /// 粒子のサイズ区分（大/小）
@@ -42,7 +42,7 @@ impl Particle {
 }
 
 /// 全パーティクルを Vec で管理するリソース
-#[derive(Resource, Default)]
+#[derive(Default)]
 pub struct ParticleStore {
     pub particles: Vec<Particle>,
     /// spawn/clear 操作でインクリメントされる世代番号。
@@ -62,14 +62,5 @@ impl ParticleStore {
     pub fn clear(&mut self) {
         self.particles.clear();
         self.generation += 1;
-    }
-
-    pub fn len(&self) -> usize {
-        self.particles.len()
-    }
-
-    #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
-        self.particles.is_empty()
     }
 }

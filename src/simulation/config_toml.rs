@@ -1,7 +1,7 @@
 use std::fmt::{Display, Formatter};
 use std::path::Path;
 
-use bevy::prelude::*;
+use mikage::glam::Vec3;
 use serde::Deserialize;
 
 use crate::simulation::constants::{
@@ -389,7 +389,7 @@ fn convert_raw_config(raw: RawRoot, source_name: &str) -> LoadedConfig {
                 &mut warnings,
             ),
         });
-    let light = raw
+    let mut light = raw
         .ui
         .light
         .as_ref()
@@ -442,6 +442,12 @@ fn convert_raw_config(raw: RawRoot, source_name: &str) -> LoadedConfig {
                 .shadows_enabled
                 .unwrap_or(light_defaults.shadows_enabled),
         });
+    if light.shadows_enabled {
+        warnings.push(format!(
+            "{source_name}: ui.light.shadows_enabled is unsupported by mikage; shadows are disabled."
+        ));
+        light.shadows_enabled = false;
+    }
 
     let particle = SimulationConfig {
         large_radius: sanitize_f32(
@@ -960,6 +966,17 @@ mod tests {
         assert!(loaded.ui_ranges.oscillation_amplitude.min > 0.0);
     }
 
+    #[test]
+    fn unsupported_shadows_are_disabled_with_a_warning() {
+        let source =
+            EMBEDDED_CONFIG_TOML.replace("shadows_enabled = false", "shadows_enabled = true");
+        let loaded = parse_loaded_config(&source, "shadow config").expect("parse shadow config");
+        assert!(!loaded.light.shadows_enabled);
+        assert!(loaded.warnings.iter().any(|warning| {
+            warning.contains("ui.light.shadows_enabled") && warning.contains("unsupported")
+        }));
+    }
+
     #[cfg(not(target_family = "wasm"))]
     #[test]
     fn load_config_from_path_success() {
@@ -967,7 +984,7 @@ mod tests {
         std::fs::write(&path, EMBEDDED_CONFIG_TOML).expect("write config");
         let loaded = load_config_from_path(&path).expect("load config");
         std::fs::remove_file(&path).ok();
-        assert_eq!(loaded.simulation.particle.num_large, 250);
+        assert_eq!(loaded.simulation.particle.num_large, 160);
     }
 
     #[cfg(not(target_family = "wasm"))]

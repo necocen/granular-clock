@@ -1,15 +1,13 @@
-use bevy::prelude::*;
+use mikage::glam::Vec3;
 use std::collections::HashMap;
 
-use crate::simulation::constants::{GridSettings, SimulationConstants};
+use crate::simulation::constants::GridSettings;
 
 pub type GridCell = (i32, i32, i32);
 
 /// 空間ハッシュグリッドによる高速な近傍検索（CPU用）
-#[derive(Resource)]
 pub struct SpatialHashGrid {
     pub cell_size: f32,
-    pub table_size: usize,
     cells: HashMap<GridCell, Vec<usize>>,
     particle_cells: Vec<GridCell>,
 }
@@ -27,7 +25,6 @@ impl SpatialHashGrid {
     pub fn new(cell_size: f32, table_size: usize) -> Self {
         Self {
             cell_size,
-            table_size,
             cells: HashMap::with_capacity(table_size),
             particle_cells: Vec::new(),
         }
@@ -70,15 +67,6 @@ impl SpatialHashGrid {
 }
 
 impl SpatialHashGrid {
-    #[allow(dead_code)]
-    /// セルインデックスからハッシュ値を計算（デバッグ/将来用途）
-    pub fn hash_cell(&self, ix: i32, iy: i32, iz: i32) -> usize {
-        let h =
-            (ix.wrapping_mul(73856093)) ^ (iy.wrapping_mul(19349663)) ^ (iz.wrapping_mul(83492791));
-
-        (h as usize) & (self.table_size - 1)
-    }
-
     pub fn neighbor_offsets() -> &'static [GridCell; 27] {
         static OFFSETS: [GridCell; 27] = [
             (-1, -1, -1),
@@ -111,13 +99,4 @@ impl SpatialHashGrid {
         ];
         &OFFSETS
     }
-}
-
-/// GridSettings から SpatialHashGrid を初期化するシステム
-pub fn init_spatial_hash_grid(mut commands: Commands, constants: Res<SimulationConstants>) {
-    let grid_settings: GridSettings = constants.grid;
-    commands.insert_resource(SpatialHashGrid::new(
-        grid_settings.cell_size,
-        grid_settings.table_size,
-    ));
 }

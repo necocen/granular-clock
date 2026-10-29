@@ -1,5 +1,3 @@
-#define_import_path granular_clock::physics_types
-
 struct Particle {
     pos: vec3<f32>,
     radius: f32,

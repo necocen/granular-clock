@@ -1,6 +1,6 @@
 // 衝突検出・接触力計算シェーダー
 
-#import granular_clock::physics_types::{Particle, Params, grid_cell_from_pos, grid_hash_cell, grid_cell_in_bounds}
+#import granular_clock::physics_types
 
 /// 接触力とトルクの結果
 struct ContactResult {

@@ -4,14 +4,14 @@
 
 A simulator for the granular clock phenomenon [1]. When a mixture of two particle sizes is placed in a box with a low partition and subjected to vibration, the particle distribution on each side of the partition periodically reverses.
 
-This program uses physics simulation to model the particle dynamics and visualizes the results with [Bevy](https://bevyengine.org/).
+This program uses physics simulation to model the particle dynamics and visualizes the results with [mikage](https://github.com/necocen/mikage).
 
 **Live demo (runs in your browser):** https://granular.necocen.info/  
 **Supported browsers:** Chrome, Firefox, and Safari with WebGPU support
 
 ## Getting Started
 
-Requires Rust (2024 edition or newer).
+Requires Rust 1.95 or newer.
 
 ### Running Locally
 
@@ -43,6 +43,22 @@ trunk serve
 This will open the simulation in your browser. Note that the build is quite slow due to WASM size optimization.
 
 When running in the browser, custom `simulation.toml` files cannot be passed at runtime.
+
+### Lighting
+
+`[ui.light]` controls particle and container lighting at startup. The vector
+toward the light is `directional_position - directional_target`. The legacy settings
+`ambient_brightness` and `directional_illuminance` are independent intensities:
+each value is divided by the fixed scale `10500` to obtain mikage's unitless linear
+gain. These are not physical lux values. The defaults `500` and `10000` preserve
+the previous particle lighting; changing one intensity no longer changes the other.
+Scaling both by the same factor now scales brightness. Zero disables each light;
+setting both to zero renders particles and container surfaces black. Gains above
+one are supported, but output above the display range is clipped without tone mapping.
+
+The transparent floor, divider, and walls opt into mikage's lit shading while
+retaining their alpha blending. Shadows are unsupported;
+`shadows_enabled = true` produces a configuration warning and is treated as false.
 
 ## Controls
 

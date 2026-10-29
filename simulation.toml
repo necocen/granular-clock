@@ -71,14 +71,20 @@ divider_height = { min = 0.03, max = 0.47, step = 0.001 }
 
 [ui.camera]
 position = [0.25, 0.3, 0.85]
-target = [0.0, 0.2, 0.0]
+# Look at the container center (the world origin).
+target = [0.0, 0.0, 0.0]
 
 [ui.light]
+# Independent ambient/directional intensities in legacy config units (not lux).
+# Each value / 10500 is a unitless linear gain; zero disables that light.
+# The fixed conversion preserves the previous default brightness.
 ambient_brightness = 500.0
 directional_illuminance = 10000.0
+# Light direction is from directional_target toward directional_position.
 directional_position = [0.0, 2.0, 0.0]
 directional_target = [0.0, 0.0, 0.0]
-shadows_enabled = true
+# Shadows are unsupported; true produces a configuration warning.
+shadows_enabled = false
 
 [ui.contact]
 particle_restitution = { min = 0.0, max = 1.0, step = 0.01 }

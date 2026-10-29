@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use mikage::glam::Vec3;
 
 use crate::simulation::constants::{ContainerParams, WallProperties};
 

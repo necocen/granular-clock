@@ -1,5 +1,3 @@
-use bevy::prelude::*;
-
 pub mod camera;
 pub mod config;
 pub mod container;
@@ -33,7 +31,7 @@ pub struct UiIntRange {
 }
 
 /// UI で変更可能な値のレンジ設定
-#[derive(Resource, Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct UiControlRanges {
     pub substeps_per_frame: UiIntRange,
     pub oscillation_amplitude: UiSliderRange,
@@ -100,7 +98,7 @@ impl Default for UiControlRanges {
 ///
 /// これを Main World の単一リソースとして管理し、
 /// CPU/GPU/Rendering/UI から参照する。
-#[derive(Resource, Clone)]
+#[derive(Clone)]
 pub struct SimulationConstants {
     pub particle: SimulationConfig,
     pub container: ContainerParams,
