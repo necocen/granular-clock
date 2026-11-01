@@ -57,7 +57,7 @@ setting both to zero renders particles and container surfaces black. Gains above
 one are supported, but output above the display range is clipped without tone mapping.
 
 The transparent floor, divider, and walls opt into mikage's lit shading while
-retaining their alpha blending. Shadows are unsupported;
+retaining their alpha blending. Shadows are not yet enabled in this application;
 `shadows_enabled = true` produces a configuration warning and is treated as false.
 
 ## Controls

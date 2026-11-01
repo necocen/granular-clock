@@ -83,7 +83,7 @@ directional_illuminance = 10000.0
 # Light direction is from directional_target toward directional_position.
 directional_position = [0.0, 2.0, 0.0]
 directional_target = [0.0, 0.0, 0.0]
-# Shadows are unsupported; true produces a configuration warning.
+# Shadows are not yet enabled in this app; true produces a configuration warning.
 shadows_enabled = false
 
 [ui.contact]

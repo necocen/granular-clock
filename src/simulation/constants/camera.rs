@@ -29,7 +29,7 @@ pub struct LightSettings {
     pub directional_position: Vec3,
     /// Directional light target point
     pub directional_target: Vec3,
-    /// Retained for config compatibility; mikage does not support shadows.
+    /// Retained for config compatibility; this app does not yet enable shadows.
     pub shadows_enabled: bool,
 }
 

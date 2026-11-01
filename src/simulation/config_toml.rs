@@ -444,7 +444,7 @@ fn convert_raw_config(raw: RawRoot, source_name: &str) -> LoadedConfig {
         });
     if light.shadows_enabled {
         warnings.push(format!(
-            "{source_name}: ui.light.shadows_enabled is unsupported by mikage; shadows are disabled."
+            "{source_name}: ui.light.shadows_enabled is unsupported by this application; shadows are disabled."
         ));
         light.shadows_enabled = false;
     }
