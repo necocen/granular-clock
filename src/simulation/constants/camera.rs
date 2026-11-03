@@ -1,4 +1,5 @@
 use mikage::glam::Vec3;
+use mikage::{SceneLightColors, SceneLighting};
 
 /// Camera initial settings (startup-only)
 #[derive(Clone, Copy, Debug)]
@@ -21,17 +22,8 @@ impl Default for CameraSettings {
 /// Scene light initial settings (startup-only)
 #[derive(Clone, Copy, Debug)]
 pub struct LightSettings {
-    /// Ambient light intensity in legacy config units (10500 = unit gain).
-    pub ambient_brightness: f32,
-    /// Directional light intensity in legacy config units (10500 = unit gain).
-    pub directional_illuminance: f32,
-    /// Linear RGB colors, independent of light intensity.
-    pub ambient_color: Vec3,
-    pub directional_color: Vec3,
-    /// Directional light position
-    pub directional_position: Vec3,
-    /// Directional light target point
-    pub directional_target: Vec3,
+    pub lighting: SceneLighting,
+    pub colors: SceneLightColors,
     pub shadows_enabled: bool,
     pub shadow_map_resolution: u32,
     /// Render and composite in linear HDR before display tone mapping.
@@ -43,12 +35,12 @@ pub struct LightSettings {
 impl Default for LightSettings {
     fn default() -> Self {
         Self {
-            ambient_brightness: 4200.0,
-            directional_illuminance: 8400.0,
-            ambient_color: Vec3::ONE,
-            directional_color: Vec3::ONE,
-            directional_position: Vec3::new(-2.0, 4.0, 3.0),
-            directional_target: Vec3::ZERO,
+            lighting: SceneLighting {
+                direction: Vec3::new(-2.0, 4.0, 3.0),
+                ambient_intensity: 0.4,
+                directional_intensity: 0.8,
+            },
+            colors: SceneLightColors::default(),
             shadows_enabled: true,
             shadow_map_resolution: 1024,
             hdr_enabled: true,

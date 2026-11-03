@@ -46,16 +46,15 @@ When running in the browser, custom `simulation.toml` files cannot be passed at 
 
 ### Lighting
 
-`[ui.light]` controls particle and container lighting at startup. The vector
-toward the light is `directional_position - directional_target`. The legacy settings
-`ambient_brightness` and `directional_illuminance` are independent intensities:
-each value is divided by the fixed scale `10500` to obtain mikage's unitless linear
-gain. These are not physical lux values. The defaults `4200` and `8400` give
-ambient/directional gains of `0.4` and `0.8`: shadowed faces stay visible while
+`[ui.light]` controls particle and container lighting at startup. `direction`
+points toward the light and is normalized by mikage. `ambient_intensity` and
+`directional_intensity` are independent, unitless linear gains, passed directly
+to mikage. The defaults `0.4` and `0.8` keep shadowed faces visible while
 oblique front lighting preserves the shape of each particle. Changing one
 intensity does not change the other.
 Scaling both by the same factor now scales brightness. Zero disables each light;
 setting both to zero renders particles and container surfaces black.
+Unknown keys in `[ui.light]` are rejected.
 
 `ambient_color` and `directional_color` are independent linear RGB triples, defaulting
 to white `[1.0, 1.0, 1.0]`. Convert sRGB/hex colors to linear RGB before using them.

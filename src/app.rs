@@ -8,8 +8,7 @@ use crate::physics::{
     gpu::{GpuPhysicsState, ParticleGpu},
 };
 use crate::rendering::{
-    ContainerRenderer, LARGE_PARTICLE_COLOR, SMALL_PARTICLE_COLOR, SceneOutput, scene_lighting,
-    shadow_matrix,
+    ContainerRenderer, LARGE_PARTICLE_COLOR, SMALL_PARTICLE_COLOR, SceneOutput, shadow_matrix,
 };
 use crate::simulation::{
     config_toml::LoadedConfig,
@@ -64,15 +63,9 @@ impl GranularClockApp {
 
         // Create scene binding
         let scene = mikage::ColoredSceneBinding::new(device);
-        let lighting = scene_lighting(&loaded.light);
+        let lighting = loaded.light.lighting;
         scene.update_lighting(&ctx.queue, lighting);
-        scene.update_light_colors(
-            &ctx.queue,
-            mikage::SceneLightColors {
-                ambient: loaded.light.ambient_color,
-                directional: loaded.light.directional_color,
-            },
-        );
+        scene.update_light_colors(&ctx.queue, loaded.light.colors);
         let output = SceneOutput::new(
             ctx,
             target,
@@ -566,10 +559,10 @@ mod tests {
     #[ignore = "requires native GPU adapter/device and renders real frames"]
     fn configured_light_colors_survive_camera_and_gain_changes_in_hdr() {
         let mut loaded = crate::simulation::config_toml::load_embedded_config();
-        loaded.light.ambient_brightness = 10500.0;
-        loaded.light.directional_illuminance = 0.0;
-        loaded.light.ambient_color = glam::Vec3::Z;
-        loaded.light.directional_color = glam::Vec3::Y;
+        loaded.light.lighting.ambient_intensity = 1.0;
+        loaded.light.lighting.directional_intensity = 0.0;
+        loaded.light.colors.ambient = glam::Vec3::Z;
+        loaded.light.colors.directional = glam::Vec3::Y;
         loaded.light.shadows_enabled = false;
         let mut harness = centered_particle_harness(loaded, 4);
         let blue = center_rgb(&capture_scene(&mut harness));
@@ -601,8 +594,8 @@ mod tests {
     #[ignore = "requires native GPU adapter/device and renders real frames"]
     fn hdr_exposure_preserves_highlights_and_resizes_with_msaa_without_ticks() {
         let mut loaded = crate::simulation::config_toml::load_embedded_config();
-        loaded.light.ambient_brightness = 42000.0; // Independent linear gain 4.
-        loaded.light.directional_illuminance = 0.0;
+        loaded.light.lighting.ambient_intensity = 4.0;
+        loaded.light.lighting.directional_intensity = 0.0;
         loaded.light.exposure_ev = -1.0;
         loaded.light.shadows_enabled = false;
         let mut harness = centered_particle_harness(loaded, 4);
@@ -663,10 +656,9 @@ mod tests {
     #[ignore = "requires native GPU adapter/device and renders real frames"]
     fn gpu_written_particles_cast_shadows_on_container_and_preserve_ambient() {
         let mut loaded = crate::simulation::config_toml::load_embedded_config();
-        loaded.light.ambient_brightness = 2100.0;
-        loaded.light.directional_illuminance = 10500.0;
-        loaded.light.directional_position = glam::Vec3::Y;
-        loaded.light.directional_target = glam::Vec3::ZERO;
+        loaded.light.lighting.ambient_intensity = 0.2;
+        loaded.light.lighting.directional_intensity = 1.0;
+        loaded.light.lighting.direction = glam::Vec3::Y;
         let mut harness = centered_particle_harness(loaded, 4);
         harness.runtime.app.backend = PhysicsBackend::Gpu;
         harness.runtime.camera.target.y = -0.2;
@@ -752,8 +744,8 @@ mod tests {
         loaded.light.shadows_enabled = false;
         loaded.simulation.particle.num_large = 1;
         loaded.simulation.particle.num_small = 0;
-        loaded.light.ambient_brightness = 10500.0;
-        loaded.light.directional_illuminance = 0.0;
+        loaded.light.lighting.ambient_intensity = 1.0;
+        loaded.light.lighting.directional_intensity = 0.0;
         let mut camera = mikage::OrbitCamera::default();
         camera.distance = 1.0;
         let mut harness = pollster::block_on(mikage::HeadlessHarness::new(
@@ -821,8 +813,8 @@ mod tests {
         loaded.light.shadows_enabled = false;
         loaded.simulation.particle.num_large = 1;
         loaded.simulation.particle.num_small = 0;
-        loaded.light.ambient_brightness = 0.0;
-        loaded.light.directional_illuminance = 0.0;
+        loaded.light.lighting.ambient_intensity = 0.0;
+        loaded.light.lighting.directional_intensity = 0.0;
         let mut camera = mikage::OrbitCamera::default();
         camera.distance = 1.0;
         camera.yaw = 0.4;

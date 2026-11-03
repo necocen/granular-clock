@@ -75,18 +75,16 @@ position = [0.25, 0.3, 0.85]
 target = [0.0, 0.0, 0.0]
 
 [ui.light]
-# Independent ambient/directional intensities in legacy config units (not lux).
-# Each value / 10500 is a unitless linear gain; zero disables that light.
+# Independent, unitless linear light gains; zero disables that light.
 # Fill shadowed faces so particles stay readable against the dark background.
-ambient_brightness = 4200.0
-directional_illuminance = 8400.0
+ambient_intensity = 0.4
+directional_intensity = 0.8
 # Linear RGB (not sRGB); white preserves the material colors.
 ambient_color = [1.0, 1.0, 1.0]
 directional_color = [1.0, 1.0, 1.0]
-# Light direction is from directional_target toward directional_position.
+# Direction toward the light; mikage normalizes it on upload.
 # Oblique front lighting reveals the visible faces instead of just their tops.
-directional_position = [-2.0, 4.0, 3.0]
-directional_target = [0.0, 0.0, 0.0]
+direction = [-2.0, 4.0, 3.0]
 # Opaque particles cast shadows; transparent container pieces receive them.
 shadows_enabled = true
 shadow_map_resolution = 1024
