@@ -1,4 +1,3 @@
-use bevy::prelude::*;
 use std::f32::consts::PI;
 
 use crate::simulation::state::SimulationState;
@@ -6,7 +5,7 @@ use crate::simulation::state::SimulationState;
 const TWO_PI: f32 = 2.0 * PI;
 
 /// 振動パラメータ
-#[derive(Resource, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct OscillationParams {
     /// 振幅 (m)
     pub amplitude: f32,
@@ -23,15 +22,6 @@ impl Default for OscillationParams {
             frequency: 5.0,  // 5 Hz（低周波）
             enabled: true,
         }
-    }
-}
-
-impl OscillationParams {
-    /// 最大加速度を計算 (m/s²)
-    #[allow(dead_code)]
-    pub fn max_acceleration(&self) -> f32 {
-        use std::f32::consts::PI;
-        self.amplitude * (2.0 * PI * self.frequency).powi(2)
     }
 }
 

@@ -1,6 +1,6 @@
 // 空間ハッシュキー生成シェーダー
 
-#import granular_clock::physics_types::{Particle, Params, grid_cell_from_pos, grid_hash_cell}
+#import granular_clock::physics_types
 
 @group(0) @binding(0) var<uniform> params: Params;
 @group(1) @binding(0) var<storage, read> particles_in: array<Particle>;

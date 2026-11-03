@@ -1,11 +1,9 @@
-use bevy::prelude::*;
 use std::collections::VecDeque;
 
 use crate::physics::{ParticleSize, ParticleStore};
 use crate::simulation::{constants::SimulationConstants, state::SimulationState};
 
 /// 粒子分布の履歴
-#[derive(Resource)]
 pub struct DistributionHistory {
     /// タイムスタンプ
     pub timestamps: VecDeque<f64>,
@@ -49,7 +47,7 @@ impl DistributionHistory {
 }
 
 /// 現在の粒子分布
-#[derive(Resource, Default)]
+#[derive(Default)]
 pub struct CurrentDistribution {
     /// 左側の大粒子数
     pub left_large: u32,
@@ -89,13 +87,13 @@ impl CurrentDistribution {
     }
 }
 
-/// 分布を更新するシステム
-pub fn update_distribution(
-    store: Res<ParticleStore>,
-    constants: Res<SimulationConstants>,
-    mut current: ResMut<CurrentDistribution>,
-    mut history: ResMut<DistributionHistory>,
-    sim_state: Res<SimulationState>,
+/// 分布を更新する（純粋関数版）
+pub fn update_distribution_plain(
+    store: &ParticleStore,
+    constants: &SimulationConstants,
+    current: &mut CurrentDistribution,
+    history: &mut DistributionHistory,
+    sim_state: &SimulationState,
 ) {
     // カウントをリセット
     current.left_large = 0;

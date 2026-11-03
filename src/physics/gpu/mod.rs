@@ -1,13 +1,6 @@
-mod buffers;
-mod instance_writer;
-mod node;
-mod pipeline;
-mod plugin;
-mod readback;
-mod shaders;
-#[cfg(test)]
-mod tests;
+pub mod buffers;
+pub mod pipeline;
+pub mod state;
 
-pub use instance_writer::GpuInstanceWriterPlugin;
-pub use plugin::GpuPhysicsPlugin;
-pub use readback::apply_gpu_results;
+pub use buffers::ParticleGpu;
+pub use state::GpuPhysicsState;

@@ -1,7 +1,5 @@
-use bevy::prelude::*;
-
 /// シミュレーションの状態
-#[derive(Resource, Default)]
+#[derive(Default)]
 pub struct SimulationState {
     /// 一時停止中かどうか
     pub paused: bool,

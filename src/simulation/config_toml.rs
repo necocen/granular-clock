@@ -1,7 +1,8 @@
 use std::fmt::{Display, Formatter};
 use std::path::Path;
 
-use bevy::prelude::*;
+use mikage::SceneLighting;
+use mikage::glam::Vec3;
 use serde::Deserialize;
 
 use crate::simulation::constants::{
@@ -151,11 +152,10 @@ struct RawUiCamera {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawUiLight {
-    ambient_brightness: Option<f32>,
-    directional_illuminance: Option<f32>,
-    directional_position: Option<[f32; 3]>,
-    directional_target: Option<[f32; 3]>,
+    ambient_intensity: Option<f32>,
+    directional_intensity: Option<f32>,
     shadows_enabled: Option<bool>,
 }
 
@@ -394,50 +394,29 @@ fn convert_raw_config(raw: RawRoot, source_name: &str) -> LoadedConfig {
         .light
         .as_ref()
         .map_or(light_defaults, |light_ui| LightSettings {
-            ambient_brightness: sanitize_f32(
-                light_ui
-                    .ambient_brightness
-                    .unwrap_or(light_defaults.ambient_brightness),
-                light_defaults.ambient_brightness,
-                source_name,
-                "ui.light.ambient_brightness",
-                &mut warnings,
-                |v| v >= 0.0,
-            ),
-            directional_illuminance: sanitize_f32(
-                light_ui
-                    .directional_illuminance
-                    .unwrap_or(light_defaults.directional_illuminance),
-                light_defaults.directional_illuminance,
-                source_name,
-                "ui.light.directional_illuminance",
-                &mut warnings,
-                |v| v >= 0.0,
-            ),
-            directional_position: light_ui.directional_position.map_or(
-                light_defaults.directional_position,
-                |v| {
-                    sanitize_vec3(
-                        v,
-                        light_defaults.directional_position,
-                        source_name,
-                        "ui.light.directional_position",
-                        &mut warnings,
-                    )
-                },
-            ),
-            directional_target: light_ui.directional_target.map_or(
-                light_defaults.directional_target,
-                |v| {
-                    sanitize_vec3(
-                        v,
-                        light_defaults.directional_target,
-                        source_name,
-                        "ui.light.directional_target",
-                        &mut warnings,
-                    )
-                },
-            ),
+            lighting: SceneLighting {
+                ambient_intensity: sanitize_f32(
+                    light_ui
+                        .ambient_intensity
+                        .unwrap_or(light_defaults.lighting.ambient_intensity),
+                    light_defaults.lighting.ambient_intensity,
+                    source_name,
+                    "ui.light.ambient_intensity",
+                    &mut warnings,
+                    |v| v >= 0.0,
+                ),
+                directional_intensity: sanitize_f32(
+                    light_ui
+                        .directional_intensity
+                        .unwrap_or(light_defaults.lighting.directional_intensity),
+                    light_defaults.lighting.directional_intensity,
+                    source_name,
+                    "ui.light.directional_intensity",
+                    &mut warnings,
+                    |v| v >= 0.0,
+                ),
+                ..light_defaults.lighting
+            },
             shadows_enabled: light_ui
                 .shadows_enabled
                 .unwrap_or(light_defaults.shadows_enabled),
@@ -960,6 +939,83 @@ mod tests {
         assert!(loaded.ui_ranges.oscillation_amplitude.min > 0.0);
     }
 
+    #[test]
+    fn lighting_controls_are_loaded() {
+        let source = EMBEDDED_CONFIG_TOML
+            .replace("ambient_intensity = 0.4", "ambient_intensity = 0.25")
+            .replace("directional_intensity = 0.8", "directional_intensity = 1.5")
+            .replace("shadows_enabled = true", "shadows_enabled = false");
+        let loaded = parse_loaded_config(&source, "lighting config").unwrap();
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert!(!loaded.light.shadows_enabled);
+        assert_eq!(
+            loaded.light.lighting,
+            SceneLighting {
+                ambient_intensity: 0.25,
+                directional_intensity: 1.5,
+                ..LightSettings::default().lighting
+            }
+        );
+    }
+
+    #[test]
+    fn omitted_light_settings_use_application_defaults() {
+        for empty_table in [false, true] {
+            let mut raw: toml::Value = toml::from_str(EMBEDDED_CONFIG_TOML).unwrap();
+            let ui = raw["ui"].as_table_mut().unwrap();
+            if empty_table {
+                ui.insert("light".to_owned(), toml::Value::Table(Default::default()));
+            } else {
+                ui.remove("light");
+            }
+            let loaded =
+                parse_loaded_config(&toml::to_string(&raw).unwrap(), "default light config")
+                    .unwrap();
+            let defaults = LightSettings::default();
+            assert!(loaded.warnings.is_empty());
+            assert_eq!(loaded.light.lighting, defaults.lighting);
+            assert_eq!(loaded.light.shadows_enabled, defaults.shadows_enabled);
+        }
+    }
+
+    #[test]
+    fn unsupported_light_keys_are_rejected() {
+        for (key, value) in [
+            ("ambient_brightness", "500.0"),
+            ("directional_illuminance", "10000.0"),
+            ("directional_position", "[1.0, 2.0, 1.0]"),
+            ("directional_target", "[0.0, 0.0, 0.0]"),
+            ("ambient_color", "[1.0, 1.0, 1.0]"),
+            ("directional_color", "[1.0, 1.0, 1.0]"),
+            ("direction", "[-2.0, 4.0, 3.0]"),
+            ("shadow_map_resolution", "1024"),
+        ] {
+            let source =
+                EMBEDDED_CONFIG_TOML.replace("[ui.light]", &format!("[ui.light]\n{key} = {value}"));
+            let error = parse_loaded_config(&source, "obsolete light config")
+                .err()
+                .expect("obsolete key must fail");
+            assert!(error.to_string().contains(key));
+        }
+    }
+
+    #[test]
+    fn invalid_lighting_values_are_corrected_with_warnings() {
+        let source = EMBEDDED_CONFIG_TOML
+            .replace("ambient_intensity = 0.4", "ambient_intensity = -1.0")
+            .replace("directional_intensity = 0.8", "directional_intensity = inf");
+        let loaded = parse_loaded_config(&source, "invalid light config").unwrap();
+        assert_eq!(loaded.light.lighting, LightSettings::default().lighting);
+        for field in ["ambient_intensity", "directional_intensity"] {
+            assert!(
+                loaded
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.contains(field))
+            );
+        }
+    }
+
     #[cfg(not(target_family = "wasm"))]
     #[test]
     fn load_config_from_path_success() {
@@ -967,7 +1023,7 @@ mod tests {
         std::fs::write(&path, EMBEDDED_CONFIG_TOML).expect("write config");
         let loaded = load_config_from_path(&path).expect("load config");
         std::fs::remove_file(&path).ok();
-        assert_eq!(loaded.simulation.particle.num_large, 250);
+        assert_eq!(loaded.simulation.particle.num_large, 160);
     }
 
     #[cfg(not(target_family = "wasm"))]

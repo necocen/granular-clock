@@ -4,14 +4,14 @@
 
 A simulator for the granular clock phenomenon [1]. When a mixture of two particle sizes is placed in a box with a low partition and subjected to vibration, the particle distribution on each side of the partition periodically reverses.
 
-This program uses physics simulation to model the particle dynamics and visualizes the results with [Bevy](https://bevyengine.org/).
+This program uses physics simulation to model the particle dynamics and visualizes the results with [mikage](https://github.com/necocen/mikage).
 
 **Live demo (runs in your browser):** https://granular.necocen.info/  
 **Supported browsers:** Chrome, Firefox, and Safari with WebGPU support
 
 ## Getting Started
 
-Requires Rust (2024 edition or newer).
+Requires Rust 1.95 or newer.
 
 ### Running Locally
 
@@ -43,6 +43,19 @@ trunk serve
 This will open the simulation in your browser. Note that the build is quite slow due to WASM size optimization.
 
 When running in the browser, custom `simulation.toml` files cannot be passed at runtime.
+
+### Lighting
+
+`[ui.light]` has three startup settings: `ambient_intensity` (default `0.4`),
+`directional_intensity` (default `0.8`), and `shadows_enabled` (default `true`).
+The intensities are independent, unitless linear gains passed directly to mikage;
+zero disables a contribution. Output above the display range is clipped.
+Unknown keys in this section are rejected.
+
+The simulation uses fixed white lights from an oblique front direction and a
+1024² shadow map. The light volume fits the container and oscillation automatically.
+Transparent container pieces receive shadows but do not cast them. Devices without
+shadow support use unshadowed lighting and report a warning.
 
 ## Controls
 

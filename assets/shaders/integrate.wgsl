@@ -1,6 +1,6 @@
 // 積分シェーダー (Velocity Verlet)
 
-#import granular_clock::physics_types::{Particle, Params}
+#import granular_clock::physics_types
 
 @group(0) @binding(0) var<uniform> params: Params;
 @group(1) @binding(0) var<storage, read> particles_in: array<Particle>;

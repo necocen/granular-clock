@@ -1,7 +1,5 @@
-use bevy::prelude::*;
-
 /// 物理計算バックエンド
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PhysicsBackend {
     /// CPU
     Cpu,
@@ -11,7 +9,7 @@ pub enum PhysicsBackend {
 }
 
 /// シミュレーション時間の不変パラメータ
-#[derive(Resource, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct SimulationTimeParams {
     /// 固定タイムステップ（秒）
     pub dt: f32,
@@ -26,7 +24,7 @@ impl Default for SimulationTimeParams {
 }
 
 /// シミュレーション設定
-#[derive(Resource, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct SimulationSettings {
     /// 1フレームあたりのサブステップ数
     pub substeps_per_frame: u32,
