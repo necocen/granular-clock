@@ -97,7 +97,8 @@ impl ContainerRenderer {
 
         // --- Walls ---
         let wall_thickness = 0.002;
-        let wall_color = Vec4::new(0.5, 0.5, 0.5, 0.05);
+        // Keep the lit front/back faces from washing out particles through the box.
+        let wall_color = Vec4::new(0.5, 0.5, 0.5, 0.0125);
 
         // Front wall (+Z)
         let front_translation = container.base_position + Vec3::Z * container.half_extents.z;

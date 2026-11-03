@@ -43,16 +43,16 @@ pub struct LightSettings {
 impl Default for LightSettings {
     fn default() -> Self {
         Self {
-            ambient_brightness: 500.0,
-            directional_illuminance: 10000.0,
+            ambient_brightness: 4200.0,
+            directional_illuminance: 8400.0,
             ambient_color: Vec3::ONE,
             directional_color: Vec3::ONE,
-            directional_position: Vec3::new(1.0, 2.0, 1.0),
+            directional_position: Vec3::new(-2.0, 4.0, 3.0),
             directional_target: Vec3::ZERO,
             shadows_enabled: true,
             shadow_map_resolution: 1024,
             hdr_enabled: true,
-            exposure_ev: 0.0,
+            exposure_ev: 0.5,
         }
     }
 }

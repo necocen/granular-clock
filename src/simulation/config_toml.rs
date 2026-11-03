@@ -1034,7 +1034,7 @@ mod tests {
                 "shadow_map_resolution = 512",
             )
             .replace("hdr_enabled = true", "hdr_enabled = false")
-            .replace("exposure_ev = 0.0", "exposure_ev = 1.5");
+            .replace("exposure_ev = 0.5", "exposure_ev = 1.5");
         let loaded = parse_loaded_config(&source, "lighting config").unwrap();
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
         assert!(loaded.light.shadows_enabled);
@@ -1062,7 +1062,12 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n")
-            .replace("shadows_enabled = true", "shadows_enabled = false");
+            .replace("shadows_enabled = true", "shadows_enabled = false")
+            .replace("ambient_brightness = 4200.0", "ambient_brightness = 500.0")
+            .replace(
+                "directional_illuminance = 8400.0",
+                "directional_illuminance = 10000.0",
+            );
         let loaded = parse_loaded_config(&source, "legacy light config").unwrap();
         assert!(loaded.warnings.is_empty());
         assert_eq!(loaded.light.ambient_color, Vec3::ONE);
@@ -1071,7 +1076,10 @@ mod tests {
         assert_eq!(loaded.light.ambient_brightness, 500.0);
         assert!(!loaded.light.shadows_enabled);
         assert!(loaded.light.hdr_enabled);
-        assert_eq!(loaded.light.exposure_ev, 0.0);
+        assert_eq!(
+            loaded.light.exposure_ev,
+            LightSettings::default().exposure_ev
+        );
     }
 
     #[test]
@@ -1086,12 +1094,15 @@ mod tests {
                 "directional_color = [0.0, 2.0, 0.5]",
             )
             .replace("shadow_map_resolution = 1024", "shadow_map_resolution = 0")
-            .replace("exposure_ev = 0.0", "exposure_ev = nan");
+            .replace("exposure_ev = 0.5", "exposure_ev = nan");
         let loaded = parse_loaded_config(&source, "invalid light config").unwrap();
         assert_eq!(loaded.light.ambient_color, Vec3::ONE);
         assert_eq!(loaded.light.directional_color, Vec3::new(0.0, 2.0, 0.5));
         assert_eq!(loaded.light.shadow_map_resolution, 1024);
-        assert_eq!(loaded.light.exposure_ev, 0.0);
+        assert_eq!(
+            loaded.light.exposure_ev,
+            LightSettings::default().exposure_ev
+        );
         for field in ["ambient_color", "shadow_map_resolution", "exposure_ev"] {
             assert!(
                 loaded

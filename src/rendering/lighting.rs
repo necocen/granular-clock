@@ -8,7 +8,7 @@ use crate::simulation::constants::{LightSettings, SimulationConstants};
 
 /// Convert the legacy configuration units to independent, unitless light gains.
 pub fn scene_lighting(light: &LightSettings) -> SceneLighting {
-    // Preserve the previous default gains (500 / 10500 and 10000 / 10500).
+    // Retain the existing configuration units: 10500 corresponds to unit gain.
     // This is a fixed scale: changing one light no longer changes the other.
     const LIGHT_UNITS_PER_GAIN: f32 = 10500.0;
     SceneLighting {
@@ -47,7 +47,7 @@ mod tests {
     use mikage::glam::Vec3;
 
     #[test]
-    fn configured_direction_and_default_brightness_are_preserved() {
+    fn legacy_light_units_preserve_gain_and_direction() {
         let light = LightSettings {
             ambient_brightness: 500.0,
             directional_illuminance: 10000.0,
