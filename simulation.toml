@@ -80,11 +80,18 @@ target = [0.0, 0.0, 0.0]
 # The fixed conversion preserves the previous default brightness.
 ambient_brightness = 500.0
 directional_illuminance = 10000.0
+# Linear RGB (not sRGB); white preserves the material colors.
+ambient_color = [1.0, 1.0, 1.0]
+directional_color = [1.0, 1.0, 1.0]
 # Light direction is from directional_target toward directional_position.
 directional_position = [0.0, 2.0, 0.0]
 directional_target = [0.0, 0.0, 0.0]
-# Shadows are not yet enabled in this app; true produces a configuration warning.
-shadows_enabled = false
+# Opaque particles cast shadows; transparent container pieces receive them.
+shadows_enabled = true
+shadow_map_resolution = 1024
+# Composite in linear HDR, then apply EV exposure and Reinhard tone mapping.
+hdr_enabled = true
+exposure_ev = 0.0
 
 [ui.contact]
 particle_restitution = { min = 0.0, max = 1.0, step = 0.01 }

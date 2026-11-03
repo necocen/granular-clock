@@ -154,9 +154,14 @@ struct RawUiCamera {
 struct RawUiLight {
     ambient_brightness: Option<f32>,
     directional_illuminance: Option<f32>,
+    ambient_color: Option<[f32; 3]>,
+    directional_color: Option<[f32; 3]>,
     directional_position: Option<[f32; 3]>,
     directional_target: Option<[f32; 3]>,
     shadows_enabled: Option<bool>,
+    shadow_map_resolution: Option<u32>,
+    hdr_enabled: Option<bool>,
+    exposure_ev: Option<f32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -389,7 +394,7 @@ fn convert_raw_config(raw: RawRoot, source_name: &str) -> LoadedConfig {
                 &mut warnings,
             ),
         });
-    let mut light = raw
+    let light = raw
         .ui
         .light
         .as_ref()
@@ -413,6 +418,20 @@ fn convert_raw_config(raw: RawRoot, source_name: &str) -> LoadedConfig {
                 "ui.light.directional_illuminance",
                 &mut warnings,
                 |v| v >= 0.0,
+            ),
+            ambient_color: sanitize_light_color(
+                light_ui.ambient_color,
+                light_defaults.ambient_color,
+                source_name,
+                "ui.light.ambient_color",
+                &mut warnings,
+            ),
+            directional_color: sanitize_light_color(
+                light_ui.directional_color,
+                light_defaults.directional_color,
+                source_name,
+                "ui.light.directional_color",
+                &mut warnings,
             ),
             directional_position: light_ui.directional_position.map_or(
                 light_defaults.directional_position,
@@ -441,13 +460,26 @@ fn convert_raw_config(raw: RawRoot, source_name: &str) -> LoadedConfig {
             shadows_enabled: light_ui
                 .shadows_enabled
                 .unwrap_or(light_defaults.shadows_enabled),
+            shadow_map_resolution: sanitize_u32(
+                light_ui
+                    .shadow_map_resolution
+                    .unwrap_or(light_defaults.shadow_map_resolution),
+                light_defaults.shadow_map_resolution,
+                source_name,
+                "ui.light.shadow_map_resolution",
+                &mut warnings,
+                |v| (1..=8192).contains(&v),
+            ),
+            hdr_enabled: light_ui.hdr_enabled.unwrap_or(light_defaults.hdr_enabled),
+            exposure_ev: sanitize_f32(
+                light_ui.exposure_ev.unwrap_or(light_defaults.exposure_ev),
+                light_defaults.exposure_ev,
+                source_name,
+                "ui.light.exposure_ev",
+                &mut warnings,
+                |v| (-32.0..=32.0).contains(&v),
+            ),
         });
-    if light.shadows_enabled {
-        warnings.push(format!(
-            "{source_name}: ui.light.shadows_enabled is unsupported by this application; shadows are disabled."
-        ));
-        light.shadows_enabled = false;
-    }
 
     let particle = SimulationConfig {
         large_radius: sanitize_f32(
@@ -767,6 +799,26 @@ fn sanitize_u32(
     }
 }
 
+fn sanitize_light_color(
+    value: Option<[f32; 3]>,
+    default: Vec3,
+    source_name: &str,
+    key: &str,
+    warnings: &mut Vec<String>,
+) -> Vec3 {
+    let value = value.unwrap_or(default.to_array());
+    Vec3::from_array(std::array::from_fn(|i| {
+        sanitize_f32(
+            value[i],
+            default[i],
+            source_name,
+            &format!("{key}[{i}]"),
+            warnings,
+            |v| v >= 0.0,
+        )
+    }))
+}
+
 fn sanitize_vec3(
     value: [f32; 3],
     default: Vec3,
@@ -967,14 +1019,87 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_shadows_are_disabled_with_a_warning() {
-        let source =
-            EMBEDDED_CONFIG_TOML.replace("shadows_enabled = false", "shadows_enabled = true");
-        let loaded = parse_loaded_config(&source, "shadow config").expect("parse shadow config");
+    fn lighting_controls_are_loaded_without_unsupported_warnings() {
+        let source = EMBEDDED_CONFIG_TOML
+            .replace(
+                "ambient_color = [1.0, 1.0, 1.0]",
+                "ambient_color = [0.2, 0.4, 1.0]",
+            )
+            .replace(
+                "directional_color = [1.0, 1.0, 1.0]",
+                "directional_color = [1.0, 0.5, 0.1]",
+            )
+            .replace(
+                "shadow_map_resolution = 1024",
+                "shadow_map_resolution = 512",
+            )
+            .replace("hdr_enabled = true", "hdr_enabled = false")
+            .replace("exposure_ev = 0.0", "exposure_ev = 1.5");
+        let loaded = parse_loaded_config(&source, "lighting config").unwrap();
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert!(loaded.light.shadows_enabled);
+        assert_eq!(loaded.light.shadow_map_resolution, 512);
+        assert_eq!(loaded.light.ambient_color, Vec3::new(0.2, 0.4, 1.0));
+        assert_eq!(loaded.light.directional_color, Vec3::new(1.0, 0.5, 0.1));
+        assert!(!loaded.light.hdr_enabled);
+        assert_eq!(loaded.light.exposure_ev, 1.5);
+    }
+
+    #[test]
+    fn legacy_light_config_uses_defaults_for_new_fields() {
+        let source = EMBEDDED_CONFIG_TOML
+            .lines()
+            .filter(|line| {
+                ![
+                    "ambient_color =",
+                    "directional_color =",
+                    "shadow_map_resolution =",
+                    "hdr_enabled =",
+                    "exposure_ev =",
+                ]
+                .iter()
+                .any(|key| line.starts_with(key))
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            .replace("shadows_enabled = true", "shadows_enabled = false");
+        let loaded = parse_loaded_config(&source, "legacy light config").unwrap();
+        assert!(loaded.warnings.is_empty());
+        assert_eq!(loaded.light.ambient_color, Vec3::ONE);
+        assert_eq!(loaded.light.directional_color, Vec3::ONE);
+        assert_eq!(loaded.light.shadow_map_resolution, 1024);
+        assert_eq!(loaded.light.ambient_brightness, 500.0);
         assert!(!loaded.light.shadows_enabled);
-        assert!(loaded.warnings.iter().any(|warning| {
-            warning.contains("ui.light.shadows_enabled") && warning.contains("unsupported")
-        }));
+        assert!(loaded.light.hdr_enabled);
+        assert_eq!(loaded.light.exposure_ev, 0.0);
+    }
+
+    #[test]
+    fn invalid_lighting_values_are_corrected_with_warnings() {
+        let source = EMBEDDED_CONFIG_TOML
+            .replace(
+                "ambient_color = [1.0, 1.0, 1.0]",
+                "ambient_color = [-1.0, nan, inf]",
+            )
+            .replace(
+                "directional_color = [1.0, 1.0, 1.0]",
+                "directional_color = [0.0, 2.0, 0.5]",
+            )
+            .replace("shadow_map_resolution = 1024", "shadow_map_resolution = 0")
+            .replace("exposure_ev = 0.0", "exposure_ev = nan");
+        let loaded = parse_loaded_config(&source, "invalid light config").unwrap();
+        assert_eq!(loaded.light.ambient_color, Vec3::ONE);
+        assert_eq!(loaded.light.directional_color, Vec3::new(0.0, 2.0, 0.5));
+        assert_eq!(loaded.light.shadow_map_resolution, 1024);
+        assert_eq!(loaded.light.exposure_ev, 0.0);
+        for field in ["ambient_color", "shadow_map_resolution", "exposure_ev"] {
+            assert!(
+                loaded
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.contains(field))
+            );
+        }
     }
 
     #[cfg(not(target_family = "wasm"))]

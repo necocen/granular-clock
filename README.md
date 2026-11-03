@@ -51,14 +51,29 @@ toward the light is `directional_position - directional_target`. The legacy sett
 `ambient_brightness` and `directional_illuminance` are independent intensities:
 each value is divided by the fixed scale `10500` to obtain mikage's unitless linear
 gain. These are not physical lux values. The defaults `500` and `10000` preserve
-the previous particle lighting; changing one intensity no longer changes the other.
+the previous linear lighting before display mapping; changing one intensity does not change the other.
 Scaling both by the same factor now scales brightness. Zero disables each light;
-setting both to zero renders particles and container surfaces black. Gains above
-one are supported, but output above the display range is clipped without tone mapping.
+setting both to zero renders particles and container surfaces black.
 
-The transparent floor, divider, and walls opt into mikage's lit shading while
-retaining their alpha blending. Shadows are not yet enabled in this application;
-`shadows_enabled = true` produces a configuration warning and is treated as false.
+`ambient_color` and `directional_color` are independent linear RGB triples, defaulting
+to white `[1.0, 1.0, 1.0]`. Convert sRGB/hex colors to linear RGB before using them.
+Components must be finite and nonnegative; values above one are allowed.
+
+`shadows_enabled = true` enables directional shadows from opaque particles onto
+other particles and the transparent floor, divider, and walls. The transparent
+container receives shadows but does not cast them. `shadow_map_resolution`
+defaults to 1024 (valid configuration range: 1–8192, capped by device limits).
+The light volume fits the container and oscillation amplitude automatically.
+Unsupported devices use unshadowed lighting and report a warning.
+
+`hdr_enabled = true` renders opaque and transparent geometry into a linear
+`Rgba16Float` target, then applies `exposure_ev` and Reinhard tone mapping before
+the GUI. Zero EV is unity; +1 doubles radiance and −1 halves it (range: −32 to +32).
+This preserves highlight differences above one instead of clipping them at the
+scene pass. The mapper handles display sRGB encoding once; the GUI is unaffected
+by exposure. HDR and shadows are enabled by default. Set `hdr_enabled = false`
+for direct rendering with clipping and no exposure adjustment. Devices without
+the required HDR target support use direct rendering and report a warning.
 
 ## Controls
 

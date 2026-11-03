@@ -8,7 +8,8 @@ use crate::physics::{
     gpu::{GpuPhysicsState, ParticleGpu},
 };
 use crate::rendering::{
-    ContainerRenderer, LARGE_PARTICLE_COLOR, SMALL_PARTICLE_COLOR, scene_lighting,
+    ContainerRenderer, LARGE_PARTICLE_COLOR, SMALL_PARTICLE_COLOR, SceneOutput, scene_lighting,
+    shadow_matrix,
 };
 use crate::simulation::{
     config_toml::LoadedConfig,
@@ -19,8 +20,10 @@ use crate::ui::{PerfDisplayState, draw_control_panel, draw_distribution_panel};
 
 struct RenderResources {
     instance_renderer: InstanceRenderer,
-    scene: mikage::SceneBinding,
-    depth_view: wgpu::TextureView,
+    scene: mikage::ColoredSceneBinding,
+    shadow: mikage::DirectionalShadow,
+    light_direction: glam::Vec3,
+    output: SceneOutput,
     target_config: mikage::RenderTargetConfig,
     container: ContainerRenderer,
 }
@@ -60,15 +63,54 @@ impl GranularClockApp {
         let device = &ctx.device;
 
         // Create scene binding
-        let scene = mikage::SceneBinding::new(device);
-        scene.update_lighting(&ctx.queue, scene_lighting(&loaded.light));
+        let scene = mikage::ColoredSceneBinding::new(device);
+        let lighting = scene_lighting(&loaded.light);
+        scene.update_lighting(&ctx.queue, lighting);
+        scene.update_light_colors(
+            &ctx.queue,
+            mikage::SceneLightColors {
+                ambient: loaded.light.ambient_color,
+                directional: loaded.light.directional_color,
+            },
+        );
+        let output = SceneOutput::new(
+            ctx,
+            target,
+            size,
+            loaded.light.hdr_enabled,
+            loaded.light.exposure_ev,
+        );
+        let scene_target = output.config(target);
+        let resolution = loaded
+            .light
+            .shadow_map_resolution
+            .min(device.limits().max_texture_dimension_2d);
+        if resolution != loaded.light.shadow_map_resolution {
+            tracing::warn!("Shadow map resolution limited to {resolution} by the GPU");
+        }
+        let shadow = mikage::DirectionalShadow::new(
+            ctx,
+            mikage::DirectionalShadowConfig {
+                resolution,
+                light_view_projection: shadow_matrix(&constants, lighting.direction),
+                enabled: loaded.light.shadows_enabled,
+                ..Default::default()
+            },
+        )
+        .expect("valid directional shadow configuration");
+        if loaded.light.shadows_enabled && !shadow.is_supported() {
+            tracing::warn!(
+                "Directional shadows are unavailable on this GPU; using unshadowed lighting"
+            );
+        }
 
         // Create instance renderer with IcoSphere mesh
         let sphere = mikage::IcoSphereMesh::generate(2);
-        let mut instance_renderer = InstanceRenderer::new(
+        let mut instance_renderer = InstanceRenderer::with_light_colors_and_shadows(
             ctx,
-            target,
-            scene.layout(),
+            scene_target,
+            &scene,
+            &shadow,
             &sphere.positions,
             &sphere.normals,
             &sphere.indices,
@@ -82,11 +124,8 @@ impl GranularClockApp {
         let total_particles = constants.particle.num_large + constants.particle.num_small;
         instance_renderer.ensure_capacity(device, total_particles);
 
-        // Create depth texture
-        let (_depth_texture, depth_view) = mikage::create_depth_texture(ctx, size, target);
-
         // Create container renderer (shares the scene bind group layout)
-        let container = ContainerRenderer::new(ctx, target, scene.layout());
+        let container = ContainerRenderer::new(ctx, scene_target, &scene, &shadow);
 
         // Create GPU physics state
         let gpu_physics =
@@ -95,7 +134,9 @@ impl GranularClockApp {
         let render = RenderResources {
             instance_renderer,
             scene,
-            depth_view,
+            shadow,
+            light_direction: lighting.direction,
+            output,
             target_config: target,
             container,
         };
@@ -379,25 +420,42 @@ impl mikage::App for GranularClockApp {
         self.render
             .container
             .update_transforms(ctx.gpu, &self.constants, &self.sim_state);
+        self.render
+            .shadow
+            .update_matrix(
+                &ctx.gpu.queue,
+                shadow_matrix(&self.constants, self.render.light_direction),
+            )
+            .expect("finite shadow volume");
     }
 
     fn render(&mut self, ctx: &mut mikage::RenderContext<mikage::OrbitCamera>) {
-        // Render
-        let color_attachment = ctx.color_attachment(wgpu::Operations {
-            load: wgpu::LoadOp::Clear(wgpu::Color {
-                // #1a1a2e in linear space
-                r: 0.0088,
-                g: 0.0088,
-                b: 0.025,
-                a: 1.0,
-            }),
-            store: wgpu::StoreOp::Store,
-        });
+        if let Some(mut pass) = self.render.shadow.begin_pass(ctx.encoder) {
+            self.render.container.render_shadow(&mut pass);
+            self.render.instance_renderer.render_shadow(&mut pass);
+        }
+        // Composite opaque particles and transparent container surfaces before mapping.
+        let scene_target = self.render.output.target(ctx.target);
+        let color_attachment = wgpu::RenderPassColorAttachment {
+            view: scene_target.view,
+            resolve_target: scene_target.resolve_target,
+            depth_slice: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(wgpu::Color {
+                    // #1a1a2e in linear space
+                    r: 0.0088,
+                    g: 0.0088,
+                    b: 0.025,
+                    a: 1.0,
+                }),
+                store: wgpu::StoreOp::Store,
+            },
+        };
         let mut pass = ctx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("main_render_pass"),
             color_attachments: &[Some(color_attachment)],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &self.render.depth_view,
+                view: scene_target.depth_view.expect("scene depth attachment"),
                 depth_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(1.0),
                     store: wgpu::StoreOp::Store,
@@ -416,6 +474,8 @@ impl mikage::App for GranularClockApp {
         // Draw container (opaque pieces first, then transparent walls)
         pass.set_bind_group(0, self.render.scene.bind_group(), &[]);
         self.render.container.render(&mut pass);
+        drop(pass);
+        self.render.output.finish(ctx.encoder, ctx.target);
     }
 
     fn gui(&mut self, ui: &mut egui::Ui) {
@@ -434,9 +494,9 @@ impl mikage::App for GranularClockApp {
     }
 
     fn resize(&mut self, ctx: &mikage::GpuContext, new_size: PhysicalSize<u32>) {
-        let (_depth_texture, depth_view) =
-            mikage::create_depth_texture(ctx, new_size, self.render.target_config);
-        self.render.depth_view = depth_view;
+        self.render
+            .output
+            .resize(ctx, new_size, self.render.target_config);
     }
 }
 
@@ -463,10 +523,233 @@ mod tests {
             .update_lighting(&harness.runtime.gpu.queue, lighting);
     }
 
+    fn centered_particle_harness(
+        mut loaded: LoadedConfig,
+        sample_count: u32,
+    ) -> mikage::HeadlessHarness<GranularClockApp> {
+        loaded.simulation.particle.num_large = 1;
+        loaded.simulation.particle.num_small = 0;
+        let mut camera = mikage::OrbitCamera::default();
+        camera.distance = 1.0;
+        let mut harness = pollster::block_on(mikage::HeadlessHarness::new(
+            crate::gpu_descriptor(),
+            mikage::RenderTargetConfig {
+                sample_count,
+                ..Default::default()
+            },
+            PhysicalSize::new(320, 240),
+            camera,
+            move |gpu, target, size| GranularClockApp::new(loaded, gpu, target, size),
+        ))
+        .expect("initialize lighting test app");
+        harness.runtime.app.backend = PhysicsBackend::Cpu;
+        harness.runtime.app.sim_state.paused = true;
+        let particle = &mut harness.runtime.app.particle_store.particles[0];
+        particle.position = glam::Vec3::ZERO;
+        particle.radius = 0.08;
+        harness
+    }
+
+    fn center_rgb(image: &[u8]) -> [f64; 3] {
+        let mut rgb = [0.0; 3];
+        for y in 116..124 {
+            for x in 156..164 {
+                for channel in 0..3 {
+                    rgb[channel] += image[(y * 320 + x) * 4 + channel] as f64 / 64.0;
+                }
+            }
+        }
+        rgb
+    }
+
+    #[test]
+    #[ignore = "requires native GPU adapter/device and renders real frames"]
+    fn configured_light_colors_survive_camera_and_gain_changes_in_hdr() {
+        let mut loaded = crate::simulation::config_toml::load_embedded_config();
+        loaded.light.ambient_brightness = 10500.0;
+        loaded.light.directional_illuminance = 0.0;
+        loaded.light.ambient_color = glam::Vec3::Z;
+        loaded.light.directional_color = glam::Vec3::Y;
+        loaded.light.shadows_enabled = false;
+        let mut harness = centered_particle_harness(loaded, 4);
+        let blue = center_rgb(&capture_scene(&mut harness));
+        assert!(
+            blue[2] > 80.0 && blue[0] < 10.0 && blue[1] < 10.0,
+            "{blue:?}"
+        );
+        harness.runtime.camera.yaw += 0.4;
+        let moved_blue = center_rgb(&capture_scene(&mut harness));
+        assert!(moved_blue[2] > 80.0 && moved_blue[0] < 10.0 && moved_blue[1] < 10.0);
+        update_lighting(
+            &harness,
+            mikage::SceneLighting {
+                direction: glam::Vec3::Z,
+                ambient_intensity: 0.0,
+                directional_intensity: 1.0,
+            },
+        );
+        let green = center_rgb(&capture_scene(&mut harness));
+        assert!(
+            green[1] > 60.0 && green[0] < 10.0 && green[2] < 10.0,
+            "{green:?}"
+        );
+        assert_eq!(harness.runtime.progress().encoded_ticks, 0);
+        harness.runtime.shutdown();
+    }
+
+    #[test]
+    #[ignore = "requires native GPU adapter/device and renders real frames"]
+    fn hdr_exposure_preserves_highlights_and_resizes_with_msaa_without_ticks() {
+        let mut loaded = crate::simulation::config_toml::load_embedded_config();
+        loaded.light.ambient_brightness = 42000.0; // Independent linear gain 4.
+        loaded.light.directional_illuminance = 0.0;
+        loaded.light.exposure_ev = -1.0;
+        loaded.light.shadows_enabled = false;
+        let mut harness = centered_particle_harness(loaded, 4);
+        let dim = center_rgb(&capture_scene(&mut harness))[0];
+        let SceneOutput::Hdr { mapper, .. } = &harness.runtime.app.render.output else {
+            panic!("native test GPU must support HDR");
+        };
+        mapper.update_exposure(&harness.runtime.gpu.queue, 0.0);
+        let bright = center_rgb(&capture_scene(&mut harness))[0];
+        update_lighting(
+            &harness,
+            mikage::SceneLighting {
+                ambient_intensity: 8.0,
+                directional_intensity: 0.0,
+                ..Default::default()
+            },
+        );
+        let brighter = center_rgb(&capture_scene(&mut harness))[0];
+        assert!(
+            bright > dim + 10.0 && brighter > bright + 5.0 && brighter < 254.0,
+            "HDR output: {dim}, {bright}, {brighter}"
+        );
+
+        let new_size = PhysicalSize::new(192, 128);
+        let destination = mikage::OffscreenTarget::new(
+            &harness.runtime.gpu,
+            new_size,
+            harness.render_target_config(),
+        )
+        .unwrap();
+        // Zero-size suspension retains valid attachments; restore at a new size.
+        mikage::App::resize(
+            &mut harness.runtime.app,
+            &harness.runtime.gpu,
+            PhysicalSize::new(0, 0),
+        );
+        mikage::App::resize(&mut harness.runtime.app, &harness.runtime.gpu, new_size);
+        let token = harness
+            .runtime
+            .render(mikage::RenderTarget {
+                view: destination.color_view(),
+                resolve_target: destination.resolve_target(),
+                depth_view: Some(destination.depth_view()),
+                size: new_size,
+                config: destination.render_target_config(),
+            })
+            .unwrap();
+        harness.runtime.wait_for(&token).unwrap();
+        let SceneOutput::Hdr { target, .. } = &harness.runtime.app.render.output else {
+            unreachable!()
+        };
+        assert_eq!(target.size(), new_size);
+        assert_eq!(harness.runtime.progress().encoded_ticks, 0);
+        harness.runtime.shutdown();
+    }
+
+    #[test]
+    #[ignore = "requires native GPU adapter/device and renders real frames"]
+    fn gpu_written_particles_cast_shadows_on_container_and_preserve_ambient() {
+        let mut loaded = crate::simulation::config_toml::load_embedded_config();
+        loaded.light.ambient_brightness = 2100.0;
+        loaded.light.directional_illuminance = 10500.0;
+        loaded.light.directional_position = glam::Vec3::Y;
+        loaded.light.directional_target = glam::Vec3::ZERO;
+        let mut harness = centered_particle_harness(loaded, 4);
+        harness.runtime.app.backend = PhysicsBackend::Gpu;
+        harness.runtime.camera.target.y = -0.2;
+        harness.runtime.camera.pitch = 0.65;
+        harness.runtime.camera.yaw = 0.4;
+        let particle = &mut harness.runtime.app.particle_store.particles[0];
+        particle.position = glam::Vec3::new(0.10, -0.10, 0.0);
+        particle.radius = 0.04;
+        let tick = harness
+            .advance_ticks(1, Duration::from_secs_f32(1.0 / 60.0))
+            .unwrap()
+            .unwrap();
+        harness.runtime.wait_for(&tick).unwrap();
+        let ticks = harness.runtime.progress().encoded_ticks;
+        assert!(harness.runtime.app.render.shadow.is_supported());
+        let shadowed = capture_scene(&mut harness);
+        harness
+            .runtime
+            .app
+            .render
+            .shadow
+            .set_enabled(&harness.runtime.gpu.queue, false);
+        let unshadowed = capture_scene(&mut harness);
+        let darker_pixels = shadowed
+            .chunks_exact(4)
+            .zip(unshadowed.chunks_exact(4))
+            .filter(|(shadowed, plain)| plain[0] > shadowed[0].saturating_add(5))
+            .count();
+        assert!(darker_pixels > 30, "shadowed pixels: {darker_pixels}");
+        // Check the receiver below the particle, away from the sphere's screen footprint.
+        let container = &harness.runtime.app.constants.container;
+        let floor_point = container.base_position
+            + glam::Vec3::new(0.10, -container.half_extents.y + 0.0025, 0.0);
+        let clip = mikage::Camera::view_projection_matrix(&harness.runtime.camera, 320.0 / 240.0)
+            .project_point3(floor_point);
+        let x = ((clip.x * 0.5 + 0.5) * 320.0) as usize;
+        let y = ((0.5 - clip.y * 0.5) * 240.0) as usize;
+        let red_at_floor = |image: &[u8]| {
+            let mut sum = 0.0;
+            for row in y - 1..=y + 1 {
+                for column in x - 1..=x + 1 {
+                    sum += image[(row * 320 + column) * 4] as f64 / 9.0;
+                }
+            }
+            sum
+        };
+        let floor_shadow = red_at_floor(&shadowed);
+        let floor_plain = red_at_floor(&unshadowed);
+        assert!(
+            floor_plain > floor_shadow + 10.0,
+            "floor red with/without shadow: {floor_shadow}/{floor_plain}"
+        );
+
+        update_lighting(
+            &harness,
+            mikage::SceneLighting {
+                ambient_intensity: 1.0,
+                directional_intensity: 0.0,
+                ..Default::default()
+            },
+        );
+        let ambient = capture_scene(&mut harness);
+        harness
+            .runtime
+            .app
+            .render
+            .shadow
+            .set_enabled(&harness.runtime.gpu.queue, true);
+        assert!(
+            capture_scene(&mut harness) == ambient,
+            "shadows must not attenuate ambient light"
+        );
+        assert_eq!(harness.runtime.progress().encoded_ticks, ticks);
+        assert_eq!(harness.runtime.app.sim_state.elapsed, 0.0);
+        harness.runtime.shutdown();
+    }
+
     #[test]
     #[ignore = "requires native GPU adapter/device and renders real frames"]
     fn configured_lighting_changes_rendered_pixels_and_survives_camera_updates() {
         let mut loaded = crate::simulation::config_toml::load_embedded_config();
+        loaded.light.hdr_enabled = false;
+        loaded.light.shadows_enabled = false;
         loaded.simulation.particle.num_large = 1;
         loaded.simulation.particle.num_small = 0;
         loaded.light.ambient_brightness = 10500.0;
@@ -534,6 +817,8 @@ mod tests {
     #[ignore = "requires native GPU adapter/device and renders real frames"]
     fn transparent_container_responds_to_light_intensity() {
         let mut loaded = crate::simulation::config_toml::load_embedded_config();
+        loaded.light.hdr_enabled = false;
+        loaded.light.shadows_enabled = false;
         loaded.simulation.particle.num_large = 1;
         loaded.simulation.particle.num_small = 0;
         loaded.light.ambient_brightness = 0.0;

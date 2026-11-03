@@ -27,9 +27,10 @@ impl ContainerRenderer {
     pub fn new(
         gpu: &mikage::GpuContext,
         target: mikage::RenderTargetConfig,
-        view_bind_group_layout: &wgpu::BindGroupLayout,
+        scene: &mikage::ColoredSceneBinding,
+        shadow: &mikage::DirectionalShadow,
     ) -> Self {
-        let mut solid = SolidRenderer::new(gpu, target, view_bind_group_layout);
+        let mut solid = SolidRenderer::with_light_colors_and_shadows(gpu, target, scene, shadow);
 
         let cube = mikage::CubeMesh::generate();
 
@@ -151,5 +152,10 @@ impl ContainerRenderer {
     /// The scene bind group must be set at group(0) before calling this.
     pub fn render<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>) {
         self.solid.render(pass);
+    }
+
+    pub fn render_shadow<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>) {
+        // All current pieces are transparent, so mikage excludes them as casters.
+        self.solid.render_shadow(pass);
     }
 }
