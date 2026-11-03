@@ -8,7 +8,7 @@ use crate::physics::{
     gpu::{GpuPhysicsState, ParticleGpu},
 };
 use crate::rendering::{
-    ContainerRenderer, LARGE_PARTICLE_COLOR, SMALL_PARTICLE_COLOR, SceneOutput, shadow_matrix,
+    ContainerRenderer, LARGE_PARTICLE_COLOR, SMALL_PARTICLE_COLOR, shadow_matrix,
 };
 use crate::simulation::{
     config_toml::LoadedConfig,
@@ -22,7 +22,7 @@ struct RenderResources {
     scene: mikage::ColoredSceneBinding,
     shadow: mikage::DirectionalShadow,
     light_direction: glam::Vec3,
-    output: SceneOutput,
+    depth_view: wgpu::TextureView,
     target_config: mikage::RenderTargetConfig,
     container: ContainerRenderer,
 }
@@ -65,8 +65,7 @@ impl GranularClockApp {
         let scene = mikage::ColoredSceneBinding::new(device);
         let lighting = loaded.light.lighting;
         scene.update_lighting(&ctx.queue, lighting);
-        let output = SceneOutput::new(ctx, target, size);
-        let scene_target = output.config(target);
+        let (_, depth_view) = mikage::create_depth_texture(ctx, size, target);
         let shadow = mikage::DirectionalShadow::new(
             ctx,
             mikage::DirectionalShadowConfig {
@@ -86,7 +85,7 @@ impl GranularClockApp {
         let sphere = mikage::IcoSphereMesh::generate(2);
         let mut instance_renderer = InstanceRenderer::with_light_colors_and_shadows(
             ctx,
-            scene_target,
+            target,
             &scene,
             &shadow,
             &sphere.positions,
@@ -103,7 +102,7 @@ impl GranularClockApp {
         instance_renderer.ensure_capacity(device, total_particles);
 
         // Create container renderer (shares the scene bind group layout)
-        let container = ContainerRenderer::new(ctx, scene_target, &scene, &shadow);
+        let container = ContainerRenderer::new(ctx, target, &scene, &shadow);
 
         // Create GPU physics state
         let gpu_physics =
@@ -114,7 +113,7 @@ impl GranularClockApp {
             scene,
             shadow,
             light_direction: lighting.direction,
-            output,
+            depth_view,
             target_config: target,
             container,
         };
@@ -412,28 +411,21 @@ impl mikage::App for GranularClockApp {
             self.render.container.render_shadow(&mut pass);
             self.render.instance_renderer.render_shadow(&mut pass);
         }
-        // Composite opaque particles and transparent container surfaces before mapping.
-        let scene_target = self.render.output.target(ctx.target);
-        let color_attachment = wgpu::RenderPassColorAttachment {
-            view: scene_target.view,
-            resolve_target: scene_target.resolve_target,
-            depth_slice: None,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Clear(wgpu::Color {
-                    // #1a1a2e in linear space
-                    r: 0.0088,
-                    g: 0.0088,
-                    b: 0.025,
-                    a: 1.0,
-                }),
-                store: wgpu::StoreOp::Store,
-            },
-        };
+        let color_attachment = ctx.color_attachment(wgpu::Operations {
+            load: wgpu::LoadOp::Clear(wgpu::Color {
+                // #1a1a2e in linear space
+                r: 0.0088,
+                g: 0.0088,
+                b: 0.025,
+                a: 1.0,
+            }),
+            store: wgpu::StoreOp::Store,
+        });
         let mut pass = ctx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("main_render_pass"),
             color_attachments: &[Some(color_attachment)],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: scene_target.depth_view.expect("scene depth attachment"),
+                view: &self.render.depth_view,
                 depth_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(1.0),
                     store: wgpu::StoreOp::Store,
@@ -452,8 +444,6 @@ impl mikage::App for GranularClockApp {
         // Draw container (opaque pieces first, then transparent walls)
         pass.set_bind_group(0, self.render.scene.bind_group(), &[]);
         self.render.container.render(&mut pass);
-        drop(pass);
-        self.render.output.finish(ctx.encoder, ctx.target);
     }
 
     fn gui(&mut self, ui: &mut egui::Ui) {
@@ -472,9 +462,12 @@ impl mikage::App for GranularClockApp {
     }
 
     fn resize(&mut self, ctx: &mikage::GpuContext, new_size: PhysicalSize<u32>) {
-        self.render
-            .output
-            .resize(ctx, new_size, self.render.target_config);
+        if new_size.width == 0 || new_size.height == 0 {
+            return;
+        }
+        let (_, depth_view) =
+            mikage::create_depth_texture(ctx, new_size, self.render.target_config);
+        self.render.depth_view = depth_view;
     }
 }
 
@@ -542,7 +535,7 @@ mod tests {
 
     #[test]
     #[ignore = "requires native GPU adapter/device and renders real frames"]
-    fn light_colors_survive_camera_and_gain_changes_in_hdr() {
+    fn light_colors_survive_camera_and_gain_changes() {
         let mut loaded = crate::simulation::config_toml::load_embedded_config();
         loaded.light.lighting.ambient_intensity = 1.0;
         loaded.light.lighting.directional_intensity = 0.0;
@@ -582,35 +575,10 @@ mod tests {
 
     #[test]
     #[ignore = "requires native GPU adapter/device and renders real frames"]
-    fn hdr_exposure_preserves_highlights_and_resizes_with_msaa_without_ticks() {
-        let mut loaded = crate::simulation::config_toml::load_embedded_config();
-        loaded.light.lighting.ambient_intensity = 4.0;
-        loaded.light.lighting.directional_intensity = 0.0;
-        loaded.light.shadows_enabled = false;
-        let mut harness = centered_particle_harness(loaded, 4);
-        let SceneOutput::Hdr { mapper, .. } = &harness.runtime.app.render.output else {
-            panic!("native test GPU must support HDR");
-        };
-        mapper.update_exposure(&harness.runtime.gpu.queue, -1.0);
-        let dim = center_rgb(&capture_scene(&mut harness))[0];
-        let SceneOutput::Hdr { mapper, .. } = &harness.runtime.app.render.output else {
-            panic!("native test GPU must support HDR");
-        };
-        mapper.update_exposure(&harness.runtime.gpu.queue, 0.0);
-        let bright = center_rgb(&capture_scene(&mut harness))[0];
-        update_lighting(
-            &harness,
-            mikage::SceneLighting {
-                ambient_intensity: 8.0,
-                directional_intensity: 0.0,
-                ..Default::default()
-            },
-        );
-        let brighter = center_rgb(&capture_scene(&mut harness))[0];
-        assert!(
-            bright > dim + 10.0 && brighter > bright + 5.0 && brighter < 254.0,
-            "HDR output: {dim}, {bright}, {brighter}"
-        );
+    fn render_resizes_with_msaa_without_ticks() {
+        let mut harness =
+            centered_particle_harness(crate::simulation::config_toml::load_embedded_config(), 4);
+        assert_eq!(capture_scene(&mut harness).len(), 320 * 240 * 4);
 
         let new_size = PhysicalSize::new(192, 128);
         let destination = mikage::OffscreenTarget::new(
@@ -637,10 +605,6 @@ mod tests {
             })
             .unwrap();
         harness.runtime.wait_for(&token).unwrap();
-        let SceneOutput::Hdr { target, .. } = &harness.runtime.app.render.output else {
-            unreachable!()
-        };
-        assert_eq!(target.size(), new_size);
         assert_eq!(harness.runtime.progress().encoded_ticks, 0);
         harness.runtime.shutdown();
     }
@@ -766,7 +730,7 @@ mod tests {
         };
 
         let ambient_only = render_center_red(&mut harness);
-        assert!(ambient_only > 170.0, "ambient-only HDR red: {ambient_only}");
+        assert!(ambient_only > 210.0, "ambient-only red: {ambient_only}");
 
         let mut lighting = mikage::SceneLighting {
             direction: glam::Vec3::Z,

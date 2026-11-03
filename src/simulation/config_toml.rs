@@ -989,8 +989,6 @@ mod tests {
             ("directional_color", "[1.0, 1.0, 1.0]"),
             ("direction", "[-2.0, 4.0, 3.0]"),
             ("shadow_map_resolution", "1024"),
-            ("hdr_enabled", "true"),
-            ("exposure_ev", "0.5"),
         ] {
             let source =
                 EMBEDDED_CONFIG_TOML.replace("[ui.light]", &format!("[ui.light]\n{key} = {value}"));

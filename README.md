@@ -49,13 +49,13 @@ When running in the browser, custom `simulation.toml` files cannot be passed at 
 `[ui.light]` has three startup settings: `ambient_intensity` (default `0.4`),
 `directional_intensity` (default `0.8`), and `shadows_enabled` (default `true`).
 The intensities are independent, unitless linear gains passed directly to mikage;
-zero disables a contribution. Unknown keys in this section are rejected.
+zero disables a contribution. Output above the display range is clipped.
+Unknown keys in this section are rejected.
 
-The simulation uses fixed white lights from an oblique front direction, a 1024²
-shadow map, and HDR with +0.5 EV exposure and Reinhard tone mapping. The light
-volume fits the container and oscillation automatically. Transparent container
-pieces receive shadows but do not cast them. Unsupported devices fall back to
-unshadowed or direct rendering and report a warning.
+The simulation uses fixed white lights from an oblique front direction and a
+1024² shadow map. The light volume fits the container and oscillation automatically.
+Transparent container pieces receive shadows but do not cast them. Devices without
+shadow support use unshadowed lighting and report a warning.
 
 ## Controls
 
