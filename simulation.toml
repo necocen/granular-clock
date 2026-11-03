@@ -79,18 +79,8 @@ target = [0.0, 0.0, 0.0]
 # Fill shadowed faces so particles stay readable against the dark background.
 ambient_intensity = 0.4
 directional_intensity = 0.8
-# Linear RGB (not sRGB); white preserves the material colors.
-ambient_color = [1.0, 1.0, 1.0]
-directional_color = [1.0, 1.0, 1.0]
-# Direction toward the light; mikage normalizes it on upload.
-# Oblique front lighting reveals the visible faces instead of just their tops.
-direction = [-2.0, 4.0, 3.0]
 # Opaque particles cast shadows; transparent container pieces receive them.
 shadows_enabled = true
-shadow_map_resolution = 1024
-# Composite in linear HDR, then apply EV exposure and Reinhard tone mapping.
-hdr_enabled = true
-exposure_ev = 0.5
 
 [ui.contact]
 particle_restitution = { min = 0.0, max = 1.0, step = 0.01 }

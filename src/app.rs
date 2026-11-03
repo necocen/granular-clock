@@ -65,26 +65,11 @@ impl GranularClockApp {
         let scene = mikage::ColoredSceneBinding::new(device);
         let lighting = loaded.light.lighting;
         scene.update_lighting(&ctx.queue, lighting);
-        scene.update_light_colors(&ctx.queue, loaded.light.colors);
-        let output = SceneOutput::new(
-            ctx,
-            target,
-            size,
-            loaded.light.hdr_enabled,
-            loaded.light.exposure_ev,
-        );
+        let output = SceneOutput::new(ctx, target, size);
         let scene_target = output.config(target);
-        let resolution = loaded
-            .light
-            .shadow_map_resolution
-            .min(device.limits().max_texture_dimension_2d);
-        if resolution != loaded.light.shadow_map_resolution {
-            tracing::warn!("Shadow map resolution limited to {resolution} by the GPU");
-        }
         let shadow = mikage::DirectionalShadow::new(
             ctx,
             mikage::DirectionalShadowConfig {
-                resolution,
                 light_view_projection: shadow_matrix(&constants, lighting.direction),
                 enabled: loaded.light.shadows_enabled,
                 ..Default::default()
@@ -557,14 +542,19 @@ mod tests {
 
     #[test]
     #[ignore = "requires native GPU adapter/device and renders real frames"]
-    fn configured_light_colors_survive_camera_and_gain_changes_in_hdr() {
+    fn light_colors_survive_camera_and_gain_changes_in_hdr() {
         let mut loaded = crate::simulation::config_toml::load_embedded_config();
         loaded.light.lighting.ambient_intensity = 1.0;
         loaded.light.lighting.directional_intensity = 0.0;
-        loaded.light.colors.ambient = glam::Vec3::Z;
-        loaded.light.colors.directional = glam::Vec3::Y;
         loaded.light.shadows_enabled = false;
         let mut harness = centered_particle_harness(loaded, 4);
+        harness.runtime.app.render.scene.update_light_colors(
+            &harness.runtime.gpu.queue,
+            mikage::SceneLightColors {
+                ambient: glam::Vec3::Z,
+                directional: glam::Vec3::Y,
+            },
+        );
         let blue = center_rgb(&capture_scene(&mut harness));
         assert!(
             blue[2] > 80.0 && blue[0] < 10.0 && blue[1] < 10.0,
@@ -596,9 +586,12 @@ mod tests {
         let mut loaded = crate::simulation::config_toml::load_embedded_config();
         loaded.light.lighting.ambient_intensity = 4.0;
         loaded.light.lighting.directional_intensity = 0.0;
-        loaded.light.exposure_ev = -1.0;
         loaded.light.shadows_enabled = false;
         let mut harness = centered_particle_harness(loaded, 4);
+        let SceneOutput::Hdr { mapper, .. } = &harness.runtime.app.render.output else {
+            panic!("native test GPU must support HDR");
+        };
+        mapper.update_exposure(&harness.runtime.gpu.queue, -1.0);
         let dim = center_rgb(&capture_scene(&mut harness))[0];
         let SceneOutput::Hdr { mapper, .. } = &harness.runtime.app.render.output else {
             panic!("native test GPU must support HDR");
@@ -740,7 +733,6 @@ mod tests {
     #[ignore = "requires native GPU adapter/device and renders real frames"]
     fn configured_lighting_changes_rendered_pixels_and_survives_camera_updates() {
         let mut loaded = crate::simulation::config_toml::load_embedded_config();
-        loaded.light.hdr_enabled = false;
         loaded.light.shadows_enabled = false;
         loaded.simulation.particle.num_large = 1;
         loaded.simulation.particle.num_small = 0;
@@ -774,7 +766,7 @@ mod tests {
         };
 
         let ambient_only = render_center_red(&mut harness);
-        assert!(ambient_only > 210.0, "ambient-only red: {ambient_only}");
+        assert!(ambient_only > 170.0, "ambient-only HDR red: {ambient_only}");
 
         let mut lighting = mikage::SceneLighting {
             direction: glam::Vec3::Z,
@@ -809,7 +801,6 @@ mod tests {
     #[ignore = "requires native GPU adapter/device and renders real frames"]
     fn transparent_container_responds_to_light_intensity() {
         let mut loaded = crate::simulation::config_toml::load_embedded_config();
-        loaded.light.hdr_enabled = false;
         loaded.light.shadows_enabled = false;
         loaded.simulation.particle.num_large = 1;
         loaded.simulation.particle.num_small = 0;

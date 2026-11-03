@@ -1,8 +1,8 @@
 use std::fmt::{Display, Formatter};
 use std::path::Path;
 
+use mikage::SceneLighting;
 use mikage::glam::Vec3;
-use mikage::{SceneLightColors, SceneLighting};
 use serde::Deserialize;
 
 use crate::simulation::constants::{
@@ -156,13 +156,7 @@ struct RawUiCamera {
 struct RawUiLight {
     ambient_intensity: Option<f32>,
     directional_intensity: Option<f32>,
-    ambient_color: Option<[f32; 3]>,
-    directional_color: Option<[f32; 3]>,
-    direction: Option<[f32; 3]>,
     shadows_enabled: Option<bool>,
-    shadow_map_resolution: Option<u32>,
-    hdr_enabled: Option<bool>,
-    exposure_ev: Option<f32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -421,56 +415,11 @@ fn convert_raw_config(raw: RawRoot, source_name: &str) -> LoadedConfig {
                     &mut warnings,
                     |v| v >= 0.0,
                 ),
-                direction: light_ui
-                    .direction
-                    .map_or(light_defaults.lighting.direction, |v| {
-                        sanitize_vec3(
-                            v,
-                            light_defaults.lighting.direction,
-                            source_name,
-                            "ui.light.direction",
-                            &mut warnings,
-                        )
-                    }),
-            },
-            colors: SceneLightColors {
-                ambient: sanitize_light_color(
-                    light_ui.ambient_color,
-                    light_defaults.colors.ambient,
-                    source_name,
-                    "ui.light.ambient_color",
-                    &mut warnings,
-                ),
-                directional: sanitize_light_color(
-                    light_ui.directional_color,
-                    light_defaults.colors.directional,
-                    source_name,
-                    "ui.light.directional_color",
-                    &mut warnings,
-                ),
+                ..light_defaults.lighting
             },
             shadows_enabled: light_ui
                 .shadows_enabled
                 .unwrap_or(light_defaults.shadows_enabled),
-            shadow_map_resolution: sanitize_u32(
-                light_ui
-                    .shadow_map_resolution
-                    .unwrap_or(light_defaults.shadow_map_resolution),
-                light_defaults.shadow_map_resolution,
-                source_name,
-                "ui.light.shadow_map_resolution",
-                &mut warnings,
-                |v| (1..=8192).contains(&v),
-            ),
-            hdr_enabled: light_ui.hdr_enabled.unwrap_or(light_defaults.hdr_enabled),
-            exposure_ev: sanitize_f32(
-                light_ui.exposure_ev.unwrap_or(light_defaults.exposure_ev),
-                light_defaults.exposure_ev,
-                source_name,
-                "ui.light.exposure_ev",
-                &mut warnings,
-                |v| (-32.0..=32.0).contains(&v),
-            ),
         });
 
     let particle = SimulationConfig {
@@ -791,26 +740,6 @@ fn sanitize_u32(
     }
 }
 
-fn sanitize_light_color(
-    value: Option<[f32; 3]>,
-    default: Vec3,
-    source_name: &str,
-    key: &str,
-    warnings: &mut Vec<String>,
-) -> Vec3 {
-    let value = value.unwrap_or(default.to_array());
-    Vec3::from_array(std::array::from_fn(|i| {
-        sanitize_f32(
-            value[i],
-            default[i],
-            source_name,
-            &format!("{key}[{i}]"),
-            warnings,
-            |v| v >= 0.0,
-        )
-    }))
-}
-
 fn sanitize_vec3(
     value: [f32; 3],
     default: Vec3,
@@ -1015,40 +944,18 @@ mod tests {
         let source = EMBEDDED_CONFIG_TOML
             .replace("ambient_intensity = 0.4", "ambient_intensity = 0.25")
             .replace("directional_intensity = 0.8", "directional_intensity = 1.5")
-            .replace(
-                "direction = [-2.0, 4.0, 3.0]",
-                "direction = [1.0, 2.0, 3.0]",
-            )
-            .replace(
-                "ambient_color = [1.0, 1.0, 1.0]",
-                "ambient_color = [0.2, 0.4, 1.0]",
-            )
-            .replace(
-                "directional_color = [1.0, 1.0, 1.0]",
-                "directional_color = [1.0, 0.5, 0.1]",
-            )
-            .replace(
-                "shadow_map_resolution = 1024",
-                "shadow_map_resolution = 512",
-            )
-            .replace("hdr_enabled = true", "hdr_enabled = false")
-            .replace("exposure_ev = 0.5", "exposure_ev = 1.5");
+            .replace("shadows_enabled = true", "shadows_enabled = false");
         let loaded = parse_loaded_config(&source, "lighting config").unwrap();
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
-        assert!(loaded.light.shadows_enabled);
-        assert_eq!(loaded.light.shadow_map_resolution, 512);
+        assert!(!loaded.light.shadows_enabled);
         assert_eq!(
             loaded.light.lighting,
             SceneLighting {
                 ambient_intensity: 0.25,
                 directional_intensity: 1.5,
-                direction: Vec3::new(1.0, 2.0, 3.0),
+                ..LightSettings::default().lighting
             }
         );
-        assert_eq!(loaded.light.colors.ambient, Vec3::new(0.2, 0.4, 1.0));
-        assert_eq!(loaded.light.colors.directional, Vec3::new(1.0, 0.5, 0.1));
-        assert!(!loaded.light.hdr_enabled);
-        assert_eq!(loaded.light.exposure_ev, 1.5);
     }
 
     #[test]
@@ -1067,24 +974,23 @@ mod tests {
             let defaults = LightSettings::default();
             assert!(loaded.warnings.is_empty());
             assert_eq!(loaded.light.lighting, defaults.lighting);
-            assert_eq!(loaded.light.colors, defaults.colors);
-            assert_eq!(
-                loaded.light.shadow_map_resolution,
-                defaults.shadow_map_resolution
-            );
             assert_eq!(loaded.light.shadows_enabled, defaults.shadows_enabled);
-            assert_eq!(loaded.light.hdr_enabled, defaults.hdr_enabled);
-            assert_eq!(loaded.light.exposure_ev, defaults.exposure_ev);
         }
     }
 
     #[test]
-    fn obsolete_light_keys_are_rejected() {
+    fn unsupported_light_keys_are_rejected() {
         for (key, value) in [
             ("ambient_brightness", "500.0"),
             ("directional_illuminance", "10000.0"),
             ("directional_position", "[1.0, 2.0, 1.0]"),
             ("directional_target", "[0.0, 0.0, 0.0]"),
+            ("ambient_color", "[1.0, 1.0, 1.0]"),
+            ("directional_color", "[1.0, 1.0, 1.0]"),
+            ("direction", "[-2.0, 4.0, 3.0]"),
+            ("shadow_map_resolution", "1024"),
+            ("hdr_enabled", "true"),
+            ("exposure_ev", "0.5"),
         ] {
             let source =
                 EMBEDDED_CONFIG_TOML.replace("[ui.light]", &format!("[ui.light]\n{key} = {value}"));
@@ -1098,25 +1004,11 @@ mod tests {
     #[test]
     fn invalid_lighting_values_are_corrected_with_warnings() {
         let source = EMBEDDED_CONFIG_TOML
-            .replace(
-                "ambient_color = [1.0, 1.0, 1.0]",
-                "ambient_color = [-1.0, nan, inf]",
-            )
-            .replace(
-                "directional_color = [1.0, 1.0, 1.0]",
-                "directional_color = [0.0, 2.0, 0.5]",
-            )
-            .replace("shadow_map_resolution = 1024", "shadow_map_resolution = 0")
-            .replace("exposure_ev = 0.5", "exposure_ev = nan");
+            .replace("ambient_intensity = 0.4", "ambient_intensity = -1.0")
+            .replace("directional_intensity = 0.8", "directional_intensity = inf");
         let loaded = parse_loaded_config(&source, "invalid light config").unwrap();
-        assert_eq!(loaded.light.colors.ambient, Vec3::ONE);
-        assert_eq!(loaded.light.colors.directional, Vec3::new(0.0, 2.0, 0.5));
-        assert_eq!(loaded.light.shadow_map_resolution, 1024);
-        assert_eq!(
-            loaded.light.exposure_ev,
-            LightSettings::default().exposure_ev
-        );
-        for field in ["ambient_color", "shadow_map_resolution", "exposure_ev"] {
+        assert_eq!(loaded.light.lighting, LightSettings::default().lighting);
+        for field in ["ambient_intensity", "directional_intensity"] {
             assert!(
                 loaded
                     .warnings

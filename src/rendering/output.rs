@@ -1,4 +1,4 @@
-//! Scene attachments and the optional HDR-to-display pass.
+//! Scene attachments and the HDR-to-display pass, with a direct-render fallback.
 
 use mikage::dpi::PhysicalSize;
 use mikage::{
@@ -19,30 +19,26 @@ impl SceneOutput {
         gpu: &GpuContext,
         final_config: RenderTargetConfig,
         size: PhysicalSize<u32>,
-        hdr_enabled: bool,
-        exposure_ev: f32,
     ) -> Self {
-        if hdr_enabled {
-            let hdr_config = RenderTargetConfig {
-                color_format: mikage::HDR_FORMAT,
-                ..final_config
-            };
-            let hdr = OffscreenTarget::new(gpu, size, hdr_config).and_then(|target| {
-                ToneMapper::new(gpu, final_config).map(|mapper| (target, mapper))
-            });
-            match hdr {
-                Ok((target, mapper)) => {
-                    mapper.update_exposure(&gpu.queue, exposure_ev);
-                    let source = mapper.source(gpu, target.view());
-                    return Self::Hdr {
-                        target: Box::new(target),
-                        mapper,
-                        source,
-                    };
-                }
-                Err(error) => {
-                    tracing::warn!("HDR output is unavailable; using direct rendering: {error}")
-                }
+        let hdr_config = RenderTargetConfig {
+            color_format: mikage::HDR_FORMAT,
+            ..final_config
+        };
+        let hdr = OffscreenTarget::new(gpu, size, hdr_config)
+            .and_then(|target| ToneMapper::new(gpu, final_config).map(|mapper| (target, mapper)));
+        match hdr {
+            Ok((target, mapper)) => {
+                // Fixed display exposure keeps the simulation readable.
+                mapper.update_exposure(&gpu.queue, 0.5);
+                let source = mapper.source(gpu, target.view());
+                return Self::Hdr {
+                    target: Box::new(target),
+                    mapper,
+                    source,
+                };
+            }
+            Err(error) => {
+                tracing::warn!("HDR output is unavailable; using direct rendering: {error}")
             }
         }
         let (_, depth) = mikage::create_depth_texture(gpu, size, final_config);
