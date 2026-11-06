@@ -132,6 +132,31 @@ fn status_chip(ui: &mut egui::Ui, text: &str, color: egui::Color32) {
     });
 }
 
+fn length_slider(
+    ui: &mut egui::Ui,
+    value_m: &mut f32,
+    range_m: std::ops::RangeInclusive<f32>,
+    step_m: f32,
+    label: &str,
+) -> egui::Response {
+    let mut value_mm = f64::from(*value_m) * 1000.0;
+    let response = ui.add(
+        egui::Slider::new(
+            &mut value_mm,
+            f64::from(*range_m.start()) * 1000.0..=f64::from(*range_m.end()) * 1000.0,
+        )
+        .text(format!("{label} [mm]"))
+        .step_by(f64::from(step_m) * 1000.0)
+        .fixed_decimals(3)
+        // Displaying an existing value must not snap it to the slider's step grid.
+        .clamping(egui::SliderClamping::Edits),
+    );
+    if response.changed() {
+        *value_m = (value_mm / 1000.0) as f32;
+    }
+    response
+}
+
 /// Draw the Simulation Settings control panel.
 pub fn draw_control_panel(
     ctx: &egui::Context,
@@ -252,14 +277,12 @@ pub fn draw_control_panel(
                     ui_ranges.oscillation_amplitude.min,
                     ui_ranges.oscillation_amplitude.max,
                 );
-                ui.add(
-                    egui::Slider::new(
-                        &mut constants.oscillation.amplitude,
-                        ui_ranges.oscillation_amplitude.min..=ui_ranges.oscillation_amplitude.max,
-                    )
-                    .text("Amplitude [m]")
-                    .step_by(ui_ranges.oscillation_amplitude.step as f64)
-                    .fixed_decimals(3),
+                length_slider(
+                    ui,
+                    &mut constants.oscillation.amplitude,
+                    ui_ranges.oscillation_amplitude.min..=ui_ranges.oscillation_amplitude.max,
+                    ui_ranges.oscillation_amplitude.step,
+                    "Amplitude",
                 );
                 constants.oscillation.frequency = constants.oscillation.frequency.clamp(
                     ui_ranges.oscillation_frequency.min,
@@ -293,14 +316,12 @@ pub fn draw_control_panel(
                     .container
                     .divider_height
                     .clamp(slider_min, slider_max);
-                ui.add(
-                    egui::Slider::new(
-                        &mut constants.container.divider_height,
-                        slider_min..=slider_max,
-                    )
-                    .text("Divider Height [m]")
-                    .step_by(slider_step as f64)
-                    .fixed_decimals(3),
+                length_slider(
+                    ui,
+                    &mut constants.container.divider_height,
+                    slider_min..=slider_max,
+                    slider_step,
+                    "Divider Height",
                 );
             });
 
@@ -392,6 +413,69 @@ pub fn draw_control_panel(
                     .color(egui::Color32::from_gray(165)),
             );
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn draw_length_slider(
+        ctx: &egui::Context,
+        input: egui::RawInput,
+        value_m: &mut f32,
+    ) -> (egui::Response, egui::FullOutput) {
+        let mut response = None;
+        let output = ctx.run_ui(input, |ui| {
+            response = Some(length_slider(ui, value_m, 0.001..=0.12, 0.001, "Amplitude"));
+        });
+        (response.unwrap(), output)
+    }
+
+    #[test]
+    fn displaying_millimeters_preserves_fractional_meter_values() {
+        let ctx = egui::Context::default();
+        for (original, displayed) in [(0.020475_f32, "20.475"), (0.0875, "87.500")] {
+            let mut value = original;
+            for _ in 0..3 {
+                let (response, output) =
+                    draw_length_slider(&ctx, egui::RawInput::default(), &mut value);
+                assert!(!response.changed());
+                assert_eq!(value.to_bits(), original.to_bits());
+                let text: Vec<_> = output
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| match &shape.shape {
+                        egui::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                assert!(text.contains(&"Amplitude [mm]"), "{text:?}");
+                assert!(text.contains(&displayed), "{text:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn millimeter_slider_edits_write_meters_back() {
+        let ctx = egui::Context::default();
+        let mut value = 0.020_f32;
+        draw_length_slider(&ctx, egui::RawInput::default(), &mut value)
+            .0
+            .request_focus();
+        let input = egui::RawInput {
+            events: vec![egui::Event::Key {
+                key: egui::Key::ArrowRight,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            ..Default::default()
+        };
+        let (response, _) = draw_length_slider(&ctx, input, &mut value);
+        assert!(response.changed());
+        assert!((value - 0.021).abs() < 1e-7);
+    }
 }
 
 /// Draw the Particle Distribution panel.

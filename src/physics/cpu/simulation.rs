@@ -4,7 +4,7 @@ use crate::physics::ParticleStore;
 use crate::physics::cpu::contact::{ContactForce, ContactState};
 use crate::physics::cpu::{
     ContactHistory, SpatialHashGrid, clamp_to_container, clamp_velocity,
-    compute_particle_contact_force, compute_wall_contact_force, integrate_first_half,
+    compute_moving_wall_contact_force, compute_particle_contact_force, integrate_first_half,
     integrate_second_half,
 };
 use crate::simulation::{
@@ -142,9 +142,10 @@ fn compute_wall_collisions(
     container_params: &ContainerParams,
     container_offset: f32,
     wall_props: &WallProperties,
+    wall_velocity: f32,
 ) {
     particles.particles.iter_mut().for_each(|p| {
-        let wall_force = compute_wall_contact_force(
+        let wall_force = compute_moving_wall_contact_force(
             p.position,
             p.velocity,
             p.angular_velocity,
@@ -152,6 +153,7 @@ fn compute_wall_collisions(
             p.mass,
             container_params,
             container_offset,
+            wall_velocity,
             wall_props,
         );
         p.force += wall_force.force;
@@ -201,6 +203,7 @@ fn clamp_particles(
     particles: &mut ParticleStore,
     container_params: &ContainerParams,
     container_offset: f32,
+    container_velocity: f32,
 ) {
     let box_offset = Vec3::Y * container_offset;
     let box_min = container_params.base_position - container_params.half_extents + box_offset;
@@ -210,7 +213,16 @@ fn clamp_particles(
     const MAX_ANGULAR_VEL: f32 = 100.0;
 
     particles.particles.iter_mut().for_each(|p| {
-        clamp_to_container(&mut p.position, &mut p.velocity, p.radius, box_min, box_max);
+        // Permit up to half a radius of soft contact penetration.
+        p.velocity.y -= container_velocity;
+        clamp_to_container(
+            &mut p.position,
+            &mut p.velocity,
+            p.radius * 0.5,
+            box_min,
+            box_max,
+        );
+        p.velocity.y += container_velocity;
         clamp_velocity(
             &mut p.velocity,
             &mut p.angular_velocity,
@@ -242,7 +254,7 @@ pub fn run_physics_substeps_plain(
     let dt = constants.time.dt;
 
     for _ in 0..substeps {
-        advance_oscillation(sim_state, osc_params, dt);
+        crate::simulation::constants::oscillation::update_container_velocity(sim_state, osc_params);
         build_spatial_grid(grid, particles);
         clear_forces(particles);
         compute_particle_collisions(particles, grid, contact_history, &material, dt);
@@ -251,9 +263,10 @@ pub fn run_physics_substeps_plain(
             container_params,
             sim_state.container_offset,
             &wall_props,
+            sim_state.container_velocity,
         );
         integrate_positions(particles, &physics, dt);
-        clamp_particles(particles, container_params, sim_state.container_offset);
+        advance_oscillation(sim_state, osc_params, dt);
         // 後半ステップの力計算は更新後の位置に対して行う
         build_spatial_grid(grid, particles);
         clear_forces(particles);
@@ -263,9 +276,15 @@ pub fn run_physics_substeps_plain(
             container_params,
             sim_state.container_offset,
             &wall_props,
+            sim_state.container_velocity,
         );
         integrate_velocities(particles, &physics, dt);
-        clamp_particles(particles, container_params, sim_state.container_offset);
+        clamp_particles(
+            particles,
+            container_params,
+            sim_state.container_offset,
+            sim_state.container_velocity,
+        );
         contact_history.cleanup();
         sim_state.step_time(dt);
     }

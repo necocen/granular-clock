@@ -4,6 +4,9 @@ use std::f32::consts::PI;
 
 use crate::simulation::constants::MaterialProperties;
 
+#[cfg(test)]
+mod tests;
+
 /// 接触履歴
 #[derive(Default, Clone, Copy)]
 pub struct ContactState {
@@ -122,8 +125,11 @@ pub fn compute_particle_contact_force(
     let f_n_total = (f_n_elastic + f_n_damping).max(0.0);
     let f_n_vec = f_n_total * n;
 
-    // 接触点での相対速度（回転を考慮）
-    let v_t = v_rel - v_n * n - omega_i.cross(radius_i * n) + omega_j.cross(radius_j * n);
+    // n は j -> i。中心から接触点への腕は i 側が -r_i*n、j 側が +r_j*n。
+    let arm_i = -radius_i * n;
+    let arm_j = radius_j * n;
+    let v_contact = v_rel + omega_i.cross(arm_i) - omega_j.cross(arm_j);
+    let v_t = v_contact - v_contact.dot(n) * n;
 
     contact_state.last_normal = n;
 
@@ -169,33 +175,44 @@ pub fn compute_particle_contact_force(
 
     // 粒子iに作用する力とトルク
     let force_i = f_n_vec + f_t_vec;
-    let torque_i = (radius_i * n).cross(f_t_vec) + t_r_vec;
+    let torque_i = arm_i.cross(f_t_vec) + t_r_vec;
 
     // 粒子jに作用する力とトルク（作用反作用）
-    let force_j = -force_i;
-    let torque_j = (radius_j * (-n)).cross(-f_t_vec) - t_r_vec;
+    let torque_j = arm_j.cross(-f_t_vec) - t_r_vec;
 
-    // 最大加速度を制限（100g程度）して数値安定性を確保
+    if !force_i.is_finite() || !torque_i.is_finite() || !torque_j.is_finite() {
+        return (ContactForce::default(), ContactForce::default());
+    }
+
+    // 最大加速度を制限（100g程度）。ペア共通の倍率で力・トルクを縮小し、
+    // 作用反作用と摩擦によるエネルギー散逸を保つ。
     let max_accel = 1000.0; // m/s²
-    let max_force_i = max_accel * mass_i;
-    let max_force_j = max_accel * mass_j;
+    let max_force = max_accel * mass_i.min(mass_j);
+    let max_torque_i = max_accel * mass_i * radius_i;
+    let max_torque_j = max_accel * mass_j * radius_j;
+    let mut scale = 1.0_f32;
+    let force_mag = force_i.length();
+    if force_mag > max_force {
+        scale = max_force / force_mag;
+    }
+    let torque_i_mag = torque_i.length();
+    if torque_i_mag > max_torque_i {
+        scale = scale.min(max_torque_i / torque_i_mag);
+    }
+    let torque_j_mag = torque_j.length();
+    if torque_j_mag > max_torque_j {
+        scale = scale.min(max_torque_j / torque_j_mag);
+    }
 
-    let clamp_force = |v: Vec3, max: f32| -> Vec3 {
-        if v.is_nan() || !v.is_finite() {
-            Vec3::ZERO
-        } else {
-            v.clamp_length_max(max)
-        }
-    };
-
+    let force_i = force_i * scale;
     (
         ContactForce {
-            force: clamp_force(force_i, max_force_i),
-            torque: clamp_force(torque_i, max_force_i * radius_i),
+            force: force_i,
+            torque: torque_i * scale,
         },
         ContactForce {
-            force: clamp_force(force_j, max_force_j),
-            torque: clamp_force(torque_j, max_force_j * radius_j),
+            force: -force_i,
+            torque: torque_j * scale,
         },
     )
 }

@@ -1,13 +1,14 @@
 # Global simulation settings shared by CPU/GPU paths.
+# Lengths are in mm; other quantities use the units noted below.
 [simulation]
 # Gravity acceleration [m/s^2]
 gravity = [0.0, -9.80665, 0.0]
 
 # Particle population and size.
 [simulation.particle]
-# Particle radius [m]
-large_radius = 0.01
-small_radius = 0.005
+# Particle radius [mm]
+large_radius = 10.0
+small_radius = 5.0
 # Number of particles by type
 num_large = 160
 num_small = 1440
@@ -15,30 +16,30 @@ num_small = 1440
 # Particle-particle contact material properties.
 [simulation.particle.material]
 # Density [kg/m^3]
-density = 2000.0
-# Elastic model parameters
-youngs_modulus = 1.0e7
-poisson_ratio = 0.25
+density = 2500.0
+# Young's modulus [Pa] and dimensionless Poisson ratio
+youngs_modulus = 5.0e6
+poisson_ratio = 0.3
 # Collision/friction parameters
-restitution = 0.9
-friction = 0.3
-rolling_friction = 0.1
+restitution = 0.977
+friction = 0.509
+rolling_friction = 0.005
 
 # Container box dimensions.
 [simulation.container.box]
-# Full box size [m] (not half extents)
-size = [0.4, 0.7, 0.1]
+# Full box size [mm] (not half extents)
+size = [400.0, 700.0, 100.0]
 
 # Divider geometry inside the container.
 [simulation.container.divider]
-# Divider height from container floor [m]
-height = 0.17
-# Divider thickness [m]
-thickness = 0.01
+# Divider height from container floor [mm]
+height = 87.5
+# Divider thickness [mm]
+thickness = 10.0
 
 # Particle-wall contact properties.
 [simulation.container.material]
-# Penalty-model wall stiffness/damping
+# Penalty-model wall stiffness [N/m] and damping [N s/m]
 stiffness = 10000.0
 damping = 20.0
 # Wall friction and restitution
@@ -47,9 +48,9 @@ friction = 0.3
 
 # Vertical sinusoidal oscillation of the container.
 [simulation.oscillation]
-# Amplitude [m], frequency [Hz]
-amplitude = 0.037
-frequency = 33.0
+# Amplitude [mm], frequency [Hz]
+amplitude = 20.475
+frequency = 23.0
 
 # Integration step settings.
 [simulation.step]
@@ -60,19 +61,22 @@ substeps_per_frame = 10
 
 # UI slider ranges for runtime controls.
 [ui.oscillation]
-amplitude = { min = 0.001, max = 0.1, step = 0.001 }
+# Amplitude range and step [mm]
+amplitude = { min = 1.0, max = 120.0, step = 1.0 }
 frequency = { min = 1.0, max = 50.0, step = 1.0 }
 
 [ui.step]
 substeps_per_frame = { min = 1, max = 20, step = 1 }
 
 [ui.container]
-divider_height = { min = 0.03, max = 0.47, step = 0.001 }
+# Divider height range and step [mm]
+divider_height = { min = 30.0, max = 470.0, step = 1.0 }
 
 [ui.camera]
-position = [0.25, 0.3, 0.85]
-# Look at the container center (the world origin).
-target = [0.0, 0.0, 0.0]
+# Camera position and target [mm]
+position = [300.0, 150.0, 750.0]
+# Camera look-at target [mm].
+target = [0.0, -150.0, 0.0]
 
 [ui.light]
 # Independent, unitless linear light gains; zero disables that light.
