@@ -14,6 +14,9 @@ use crate::simulation::constants::SimulationConstants;
 use bytemuck::{Pod, Zeroable};
 use mikage::{create_compute_pipeline, glam, storage_buffer_entry, uniform_buffer_entry, wgpu};
 
+#[cfg(all(test, not(target_family = "wasm")))]
+mod tests;
+
 /// Instance writer パラメータ
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -319,7 +322,7 @@ impl GpuPhysicsState {
             wall_friction: wall_props.friction,
             wall_damping: wall_props.damping,
             wall_stiffness: wall_props.stiffness,
-            _pad_end: 0.0,
+            container_velocity: sim_state.container_velocity,
         };
 
         let params_bytes = bytemuck::bytes_of(&params);
@@ -543,7 +546,7 @@ impl GpuPhysicsState {
                 wall_friction: wall_props.friction,
                 wall_damping: wall_props.damping,
                 wall_stiffness: wall_props.stiffness,
-                _pad_end: 0.0,
+                container_velocity: sim_state.container_velocity,
             };
 
             let mut phase = sim_state.oscillation_frame_start_phase;
@@ -551,10 +554,31 @@ impl GpuPhysicsState {
             for _ in 0..self.substeps {
                 let mut runtime_params = base_params;
                 if osc_params.enabled {
-                    advance_oscillation_phase(&mut phase, osc_params.frequency, runtime_params.dt);
                     runtime_params.container_offset = container_params.base_position.y
                         + oscillation_displacement(osc_params.amplitude, phase);
                 }
+                runtime_params.container_velocity = if osc_params.enabled {
+                    osc_params.amplitude
+                        * std::f32::consts::TAU
+                        * osc_params.frequency
+                        * phase.cos()
+                } else {
+                    0.0
+                };
+                params_list.push(runtime_params);
+                advance_oscillation_phase(&mut phase, osc_params.frequency, time_params.dt);
+                if osc_params.enabled {
+                    runtime_params.container_offset = container_params.base_position.y
+                        + oscillation_displacement(osc_params.amplitude, phase);
+                }
+                runtime_params.container_velocity = if osc_params.enabled {
+                    osc_params.amplitude
+                        * std::f32::consts::TAU
+                        * osc_params.frequency
+                        * phase.cos()
+                } else {
+                    0.0
+                };
                 params_list.push(runtime_params);
             }
             params_list
@@ -575,7 +599,7 @@ impl GpuPhysicsState {
             if let Some(upload) = params_upload.as_ref() {
                 encoder.copy_buffer_to_buffer(
                     upload,
-                    substep_idx as u64 * params_size,
+                    (2 * substep_idx) as u64 * params_size,
                     &self.buffers.params,
                     0,
                     params_size,
@@ -593,6 +617,15 @@ impl GpuPhysicsState {
                 workgroups_sort_256,
             );
 
+            if let Some(upload) = params_upload.as_ref() {
+                encoder.copy_buffer_to_buffer(
+                    upload,
+                    (2 * substep_idx + 1) as u64 * params_size,
+                    &self.buffers.params,
+                    0,
+                    params_size,
+                );
+            }
             // 後半（B -> A）
             self.encode_half_step(
                 encoder,

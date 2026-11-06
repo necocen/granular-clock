@@ -47,10 +47,21 @@ pub fn oscillation_displacement(amplitude: f32, phase: f32) -> f32 {
 pub fn advance_oscillation(sim_state: &mut SimulationState, params: &OscillationParams, dt: f32) {
     // 振動無効時は「現在位置で停止」させる（オフセットを維持する）。
     if !params.enabled {
+        sim_state.container_velocity = 0.0;
         return;
     }
 
     advance_oscillation_phase(&mut sim_state.oscillation_phase, params.frequency, dt);
+    update_container_velocity(sim_state, params);
     sim_state.container_offset =
         oscillation_displacement(params.amplitude, sim_state.oscillation_phase);
+}
+
+/// Wall velocity at the current pose, evaluated at each force evaluation time.
+pub fn update_container_velocity(state: &mut SimulationState, params: &OscillationParams) {
+    state.container_velocity = if params.enabled {
+        params.amplitude * TWO_PI * params.frequency * state.oscillation_phase.cos()
+    } else {
+        0.0
+    };
 }

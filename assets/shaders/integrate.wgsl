@@ -21,8 +21,8 @@ fn clamp_to_container(p: ptr<function, Particle>) {
     );
 
     // X軸
-    let x_min = box_min.x + (*p).radius;
-    let x_max = box_max.x - (*p).radius;
+    let x_min = box_min.x + (*p).radius * 0.5;
+    let x_max = box_max.x - (*p).radius * 0.5;
     if ((*p).pos.x < x_min) {
         (*p).pos.x = x_min;
         (*p).vel.x = max((*p).vel.x, 0.0);
@@ -32,19 +32,19 @@ fn clamp_to_container(p: ptr<function, Particle>) {
     }
 
     // Y軸
-    let y_min = box_min.y + (*p).radius;
-    let y_max = box_max.y - (*p).radius;
+    let y_min = box_min.y + (*p).radius * 0.5;
+    let y_max = box_max.y - (*p).radius * 0.5;
     if ((*p).pos.y < y_min) {
         (*p).pos.y = y_min;
-        (*p).vel.y = max((*p).vel.y, 0.0);
+        (*p).vel.y = max((*p).vel.y, params.container_velocity);
     } else if ((*p).pos.y > y_max) {
         (*p).pos.y = y_max;
-        (*p).vel.y = min((*p).vel.y, 0.0);
+        (*p).vel.y = min((*p).vel.y, params.container_velocity);
     }
 
     // Z軸
-    let z_min = box_min.z + (*p).radius;
-    let z_max = box_max.z - (*p).radius;
+    let z_min = box_min.z + (*p).radius * 0.5;
+    let z_max = box_max.z - (*p).radius * 0.5;
     if ((*p).pos.z < z_min) {
         (*p).pos.z = z_min;
         (*p).vel.z = max((*p).vel.z, 0.0);
@@ -96,8 +96,6 @@ fn integrate_first_half(@builtin(global_invocation_id) gid: vec3<u32>) {
     p.omega += 0.5 * alpha * params.dt;
     p.pos += p.vel * params.dt;
 
-    clamp_to_container(&p);
-    clamp_velocity(&p);
 
     particles_out[id] = p;
 }

@@ -7,6 +7,7 @@ pub struct SimulationState {
     pub reset_requested: bool,
     /// 現在の振動オフセット
     pub container_offset: f32,
+    pub container_velocity: f32,
     /// 現在の振動位相 (rad)
     pub oscillation_phase: f32,
     /// 現在フレームのサブステップ開始時位相 (rad)

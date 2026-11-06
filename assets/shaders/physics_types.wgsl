@@ -31,7 +31,7 @@ struct Params {
     wall_friction: f32,
     wall_damping: f32,
     wall_stiffness: f32,
-    _pad_end: f32,
+    container_velocity: f32,
 }
 
 // 原点基準のセル座標（CPU実装と同じ）

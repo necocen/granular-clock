@@ -25,6 +25,15 @@ Simulation parameters can be configured in `simulation.toml`. Once the binary is
 /path/to/granular-clock --config ./simulation.toml
 ```
 
+Lengths in `simulation.toml` are in **millimeters**: particle radii, box size,
+divider height/thickness, oscillation amplitude, camera position/target, and
+length slider ranges/steps. The UI also displays and edits lengths in mm.
+For example, a 10 mm radius is `large_radius = 10.0` and a 400 × 700 × 100 mm
+box is `size = [400.0, 700.0, 100.0]`. Older meter-based configs need these
+values multiplied by 1000. Density remains kg/m³, gravity m/s², Young's modulus
+Pa, wall stiffness N/m, damping N·s/m, frequency Hz, and time s. Internal physics
+calculations continue to use meters.
+
 ### Running in the Browser
 
 Install Web support tooling:
