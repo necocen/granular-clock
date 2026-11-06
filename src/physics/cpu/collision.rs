@@ -116,6 +116,8 @@ pub fn compute_moving_wall_contact_force(
     total
 }
 
+/// Stationary-wall convenience wrapper for contact regression tests.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub fn compute_wall_contact_force(
     pos: Vec3,

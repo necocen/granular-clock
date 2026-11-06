@@ -3,7 +3,7 @@ use std::path::Path;
 
 use mikage::SceneLighting;
 use mikage::glam::Vec3;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 use crate::simulation::constants::{
     CameraSettings, ContainerParams, LightSettings, MaterialProperties, OscillationParams,
@@ -62,7 +62,9 @@ struct RawSimulation {
 
 #[derive(Debug, Deserialize)]
 struct RawParticleConfig {
+    #[serde(deserialize_with = "deserialize_mm")]
     large_radius: f32,
+    #[serde(deserialize_with = "deserialize_mm")]
     small_radius: f32,
     num_large: u32,
     num_small: u32,
@@ -78,17 +80,21 @@ struct RawContainer {
 
 #[derive(Debug, Deserialize, Clone)]
 struct RawContainerBox {
+    #[serde(deserialize_with = "deserialize_mm_vec3")]
     size: [f32; 3],
 }
 
 #[derive(Debug, Deserialize, Clone)]
 struct RawContainerDivider {
+    #[serde(deserialize_with = "deserialize_mm")]
     height: f32,
+    #[serde(deserialize_with = "deserialize_mm")]
     thickness: f32,
 }
 
 #[derive(Debug, Deserialize)]
 struct RawOscillation {
+    #[serde(deserialize_with = "deserialize_mm")]
     amplitude: f32,
     frequency: f32,
 }
@@ -136,18 +142,22 @@ struct RawUiStep {
 
 #[derive(Debug, Deserialize)]
 struct RawUiOscillation {
+    #[serde(deserialize_with = "deserialize_mm_range")]
     amplitude: RawUiSliderRange,
     frequency: RawUiSliderRange,
 }
 
 #[derive(Debug, Deserialize)]
 struct RawUiContainer {
+    #[serde(deserialize_with = "deserialize_mm_range")]
     divider_height: RawUiSliderRange,
 }
 
 #[derive(Debug, Deserialize)]
 struct RawUiCamera {
+    #[serde(deserialize_with = "deserialize_mm_vec3")]
     position: [f32; 3],
+    #[serde(deserialize_with = "deserialize_mm_vec3")]
     target: [f32; 3],
 }
 
@@ -179,6 +189,34 @@ struct RawUiIntRange {
     min: u32,
     max: u32,
     step: u32,
+}
+
+// TOML lengths are in mm; validation, defaults and physics continue to use m.
+// Convert before narrowing to f32 to retain precision for fractional mm values.
+fn deserialize_mm<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f32, D::Error> {
+    Ok((f64::deserialize(deserializer)? / 1000.0) as f32)
+}
+
+fn deserialize_mm_vec3<'de, D: Deserializer<'de>>(deserializer: D) -> Result<[f32; 3], D::Error> {
+    Ok(<[f64; 3]>::deserialize(deserializer)?.map(|value| (value / 1000.0) as f32))
+}
+
+fn deserialize_mm_range<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<RawUiSliderRange, D::Error> {
+    #[derive(Deserialize)]
+    struct MillimeterRange {
+        min: f64,
+        max: f64,
+        step: f64,
+    }
+
+    let range = MillimeterRange::deserialize(deserializer)?;
+    Ok(RawUiSliderRange {
+        min: (range.min / 1000.0) as f32,
+        max: (range.max / 1000.0) as f32,
+        step: (range.step / 1000.0) as f32,
+    })
 }
 
 pub fn load_embedded_config() -> LoadedConfig {
@@ -940,6 +978,68 @@ mod tests {
     }
 
     #[test]
+    fn millimeter_lengths_load_as_meters_without_scaling_other_units() {
+        let mut raw: toml::Value = toml::from_str(EMBEDDED_CONFIG_TOML).unwrap();
+        let array = |values: [f64; 3]| {
+            toml::Value::Array(values.into_iter().map(toml::Value::Float).collect())
+        };
+        raw["simulation"]["particle"]["large_radius"] = toml::Value::Integer(12);
+        raw["simulation"]["particle"]["small_radius"] = toml::Value::Float(6.25);
+        raw["simulation"]["container"]["box"]["size"] = array([600.0, 800.0, 150.0]);
+        raw["simulation"]["container"]["divider"]["height"] = toml::Value::Float(85.5);
+        raw["simulation"]["container"]["divider"]["thickness"] = toml::Value::Float(10.0);
+        raw["simulation"]["oscillation"]["amplitude"] = toml::Value::Float(20.475);
+        raw["ui"]["camera"]["position"] = array([250.0, 150.0, 850.0]);
+        raw["ui"]["camera"]["target"] = array([-125.0, 40.0, -80.0]);
+        for (section, key, values) in [
+            ("oscillation", "amplitude", [1.5, 150.5, 0.25]),
+            ("container", "divider_height", [20.5, 300.25, 0.5]),
+        ] {
+            for (field, value) in ["min", "max", "step"].into_iter().zip(values) {
+                raw["ui"][section][key][field] = toml::Value::Float(value);
+            }
+        }
+        raw["simulation"]["particle"]["material"]["density"] = toml::Value::Float(2345.0);
+        raw["simulation"]["particle"]["material"]["youngs_modulus"] = toml::Value::Float(6.0e6);
+        raw["simulation"]["container"]["material"]["stiffness"] = toml::Value::Float(12000.0);
+        raw["simulation"]["container"]["material"]["damping"] = toml::Value::Float(25.0);
+        raw["simulation"]["gravity"] = array([0.0, -8.75, 0.0]);
+        raw["simulation"]["oscillation"]["frequency"] = toml::Value::Float(17.0);
+        raw["simulation"]["step"]["dt"] = toml::Value::Float(0.0002);
+
+        let loaded = parse_loaded_config(&toml::to_string(&raw).unwrap(), "mm config").unwrap();
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        let simulation = loaded.simulation;
+        assert_eq!(simulation.particle.large_radius, 0.012);
+        assert_eq!(simulation.particle.small_radius, 0.00625);
+        assert_eq!(
+            simulation.container.half_extents,
+            Vec3::new(0.3, 0.4, 0.075)
+        );
+        assert_eq!(simulation.container.divider_height, 0.0855);
+        assert_eq!(simulation.container.divider_thickness, 0.01);
+        assert_eq!(simulation.oscillation.amplitude, 0.020475);
+        assert_eq!(loaded.camera.position, Vec3::new(0.25, 0.15, 0.85));
+        assert_eq!(loaded.camera.target, Vec3::new(-0.125, 0.04, -0.08));
+        for (range, expected) in [
+            (
+                loaded.ui_ranges.oscillation_amplitude,
+                [0.0015, 0.1505, 0.00025],
+            ),
+            (loaded.ui_ranges.divider_height, [0.0205, 0.30025, 0.0005]),
+        ] {
+            assert_eq!([range.min, range.max, range.step], expected);
+        }
+        assert_eq!(simulation.material.density, 2345.0);
+        assert_eq!(simulation.material.youngs_modulus, 6.0e6);
+        assert_eq!(simulation.wall.stiffness, 12000.0);
+        assert_eq!(simulation.wall.damping, 25.0);
+        assert_eq!(simulation.physics.gravity, Vec3::new(0.0, -8.75, 0.0));
+        assert_eq!(simulation.oscillation.frequency, 17.0);
+        assert_eq!(simulation.time.dt, 0.0002);
+    }
+
+    #[test]
     fn lighting_controls_are_loaded() {
         let source = EMBEDDED_CONFIG_TOML
             .replace("ambient_intensity = 0.4", "ambient_intensity = 0.25")
@@ -1056,11 +1156,11 @@ friction = -1.0
 rolling_friction = -1.0
 
 [simulation.container.box]
-size = [0.2, -1.0, 0.1]
+size = [200.0, -1000.0, 100.0]
 
 [simulation.container.divider]
-height = -0.1
-thickness = -0.01
+height = -100.0
+thickness = -10.0
 
 [simulation.container.material]
 stiffness = -1.0
@@ -1069,7 +1169,7 @@ friction = -1.0
 restitution = 2.0
 
 [simulation.oscillation]
-amplitude = 10.0
+amplitude = 10000.0
 frequency = -1.0
 
 [simulation.step]
@@ -1077,9 +1177,9 @@ dt = -0.1
 substeps_per_frame = 0
 
 [ui.oscillation.amplitude]
-min = 2.0
-max = 1.0
-step = -1.0
+min = 2000.0
+max = 1000.0
+step = -1000.0
 
 [ui.oscillation.frequency]
 min = 1.0
@@ -1092,9 +1192,9 @@ max = 1
 step = 0
 
 [ui.container.divider_height]
-min = 1.0
+min = 1000.0
 max = 0.0
-step = -1.0
+step = -1000.0
 
 [ui.contact.particle_restitution]
 min = 2.0
@@ -1123,6 +1223,26 @@ step = 0.01
         assert_eq!(
             loaded.simulation.particle.large_radius,
             defaults.particle.large_radius
+        );
+        assert_eq!(
+            loaded.simulation.particle.small_radius,
+            defaults.particle.small_radius
+        );
+        assert_eq!(
+            loaded.simulation.container.half_extents,
+            Vec3::new(0.1, defaults.container.half_extents.y, 0.05)
+        );
+        assert_eq!(
+            loaded.simulation.container.divider_height,
+            defaults.container.divider_height
+        );
+        assert_eq!(
+            loaded.simulation.container.divider_thickness,
+            defaults.container.divider_thickness
+        );
+        assert_eq!(
+            loaded.simulation.oscillation.amplitude,
+            ui_defaults.oscillation_amplitude.max
         );
         assert_eq!(
             loaded.simulation.material.density,
