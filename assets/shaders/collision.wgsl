@@ -16,191 +16,49 @@ struct ContactResult {
 @group(3) @binding(0) var<storage, read_write> forces: array<vec4<f32>>;
 @group(3) @binding(1) var<storage, read_write> torques: array<vec4<f32>>;
 
-fn compute_wall_normal_force(overlap_in: f32, v_n: f32, radius: f32, mass_inv: f32) -> f32 {
-    if (overlap_in <= 0.0) {
-        return 0.0;
-    }
-
-    let overlap = min(overlap_in, radius);
-    let stiffness = params.wall_stiffness;
-    let mass = 1.0 / mass_inv;
-
-    let f_spring = stiffness * overlap;
-    let ln_e = log(max(params.wall_restitution, 0.01));
-    let damping_ratio = -ln_e / sqrt(3.14159265 * 3.14159265 + ln_e * ln_e);
-    let c_crit = 2.0 * sqrt(stiffness * mass);
-    let damping_coeff = damping_ratio * c_crit;
-
-    var f_damp = 0.0;
-    if (v_n < 0.0) {
-        f_damp = -damping_coeff * v_n;
-    }
-
-    return max(f_spring + f_damp, 0.0);
-}
-
-// 仕切り中心で法線方向が決められない場合のタイブレーク（CPU実装と同じ式）。
-fn divider_tiebreak_sign(pos: vec3<f32>) -> f32 {
-    let qy = i32(floor(pos.y * 1024.0));
-    let qz = i32(floor(pos.z * 1024.0));
-    let seed = (bitcast<u32>(qy) * 0x9E3779B1u)
-        ^ (bitcast<u32>(qz) * 0x85EBCA6Bu)
-        ^ 0xC2B2AE35u;
-    return select(-1.0, 1.0, (seed & 1u) == 1u);
+fn wall_surface(normal: vec3<f32>, overlap: f32, p: Particle) -> ContactResult {
+    var result: ContactResult;
+    result.force = vec3<f32>(0.0); result.torque = vec3<f32>(0.0);
+    if (overlap <= 0.0) { return result; }
+    let velocity = p.vel - vec3<f32>(0.0, params.container_velocity, 0.0);
+    let log_e = log(max(params.wall_restitution, 0.01));
+    let ratio = -log_e / sqrt(3.14159265 * 3.14159265 + log_e * log_e);
+    let damping = 2.0 * ratio * sqrt(params.wall_stiffness / p.mass_inv);
+    let fn_mag = max(params.wall_stiffness * overlap - damping * dot(velocity, normal), 0.0);
+    let arm = -p.radius * normal;
+    let surface_velocity = velocity + cross(p.omega, arm);
+    let tangent = surface_velocity - dot(surface_velocity, normal) * normal;
+    let speed = length(tangent);
+    var friction = vec3<f32>(0.0);
+    if (speed > 1e-8) { friction = -tangent / speed * min(params.wall_friction * fn_mag, speed * params.wall_damping); }
+    result.force = fn_mag * normal + friction;
+    result.torque = cross(arm, friction);
+    return result;
 }
 
 fn compute_wall_contact(p: Particle) -> ContactResult {
+    let lo = vec3<f32>(-params.container_half_x, -params.container_half_y + params.container_offset, -params.container_half_z);
+    let hi = vec3<f32>(params.container_half_x, params.container_half_y + params.container_offset, params.container_half_z);
+    let normals = array<vec3<f32>,6>(vec3<f32>(1.0,0.0,0.0), vec3<f32>(-1.0,0.0,0.0), vec3<f32>(0.0,1.0,0.0),vec3<f32>(0.0,-1.0,0.0),vec3<f32>(0.0,0.0,1.0),vec3<f32>(0.0,0.0,-1.0));
+    let overlaps = array<f32,6>(lo.x+p.radius-p.pos.x,p.pos.x+p.radius-hi.x,lo.y+p.radius-p.pos.y,p.pos.y+p.radius-hi.y,lo.z+p.radius-p.pos.z,p.pos.z+p.radius-hi.z);
     var result: ContactResult;
-    result.force = vec3<f32>(0.0);
-    result.torque = vec3<f32>(0.0);
-
-    let box_min = vec3<f32>(
-        -params.container_half_x,
-        -params.container_half_y + params.container_offset,
-        -params.container_half_z,
-    );
-    let box_max = vec3<f32>(
-        params.container_half_x,
-        params.container_half_y + params.container_offset,
-        params.container_half_z,
-    );
-
-    // 床
-    let floor_y = box_min.y;
-    let floor_overlap = floor_y + p.radius - p.pos.y;
-    let contact_threshold = 0.001;
-    let is_floor_contact = floor_overlap > -contact_threshold;
-    let mass = 1.0 / p.mass_inv;
-
-    if (is_floor_contact) {
-        let effective_overlap = max(floor_overlap, 0.0);
-        let gravity_mag = 9.81;
-        var floor_normal_force = 0.0;
-
-        if (effective_overlap > 0.0) {
-            let f_n = compute_wall_normal_force(effective_overlap, p.vel.y, p.radius, p.mass_inv);
-            floor_normal_force += f_n;
-            result.force.y += f_n;
-        }
-
-        if (p.vel.y < 0.0 && p.vel.y > -0.01) {
-            let damping_force = -p.vel.y * mass * 100.0;
-            floor_normal_force += damping_force;
-            result.force.y += damping_force;
-        }
-
-        let support_eps = 1e-6;
-        if (floor_overlap >= -support_eps && p.vel.y <= 0.0) {
-            let support_force = max(mass * gravity_mag - floor_normal_force, 0.0);
-            if (support_force > 0.0) {
-                floor_normal_force += support_force;
-                result.force.y += support_force;
-            }
-        }
-
-        var normal_force = floor_normal_force;
-        if (floor_overlap >= -support_eps) {
-            normal_force = max(normal_force, mass * gravity_mag);
-        }
-
-        let contact_point = vec3<f32>(0.0, -p.radius, 0.0);
-        let v_t = vec3<f32>(p.vel.x, 0.0, p.vel.z) + cross(p.omega, contact_point);
-        let v_t_mag = length(v_t);
-        if (v_t_mag > 1e-8) {
-            let f_t_max = params.wall_friction * normal_force;
-            let viscous_friction = v_t_mag * params.wall_damping * 2.0;
-            let stick_friction = f_t_max * 0.1;
-            let f_t = min(f_t_max, viscous_friction + stick_friction);
-            let friction_force = -f_t * (v_t / v_t_mag);
-            result.force += friction_force;
-            result.torque += cross(contact_point, friction_force);
-        }
+    result.force=vec3<f32>(0.0); result.torque=vec3<f32>(0.0);
+    for (var i=0u;i<6u;i++) { let f=wall_surface(normals[i],overlaps[i],p); result.force+=f.force;result.torque+=f.torque; }
+    if (params.divider_height <= 0.0) { return result; }
+    let dmin=vec3<f32>(-params.divider_thickness*0.5,lo.y,lo.z);
+    let dmax=vec3<f32>(params.divider_thickness*0.5,lo.y+params.divider_height,hi.z);
+    let delta=p.pos-clamp(p.pos,dmin,dmax);
+    let distance=length(delta);
+    var normal=vec3<f32>(0.0);
+    var overlap=0.0;
+    if (distance>1e-8) { normal=delta/distance; overlap=p.radius-distance; }
+    else {
+        let distances=array<f32,6>(p.pos.x-dmin.x,dmax.x-p.pos.x,p.pos.y-dmin.y,dmax.y-p.pos.y,p.pos.z-dmin.z,dmax.z-p.pos.z);
+        var nearest=select(0u,1u,p.pos.x>=0.0);
+        for(var i=0u;i<6u;i++) { if(distances[i]<distances[nearest]) { nearest=i; } }
+        normal=-normals[nearest]; overlap=p.radius+distances[nearest];
     }
-
-    // 天井
-    let ceiling_overlap = p.pos.y + p.radius - box_max.y;
-    if (ceiling_overlap > 0.0) {
-        let f_n = compute_wall_normal_force(ceiling_overlap, -p.vel.y, p.radius, p.mass_inv);
-        result.force.y -= f_n;
-    }
-
-    // 左壁 (-X)
-    let left_overlap = box_min.x + p.radius - p.pos.x;
-    if (left_overlap > 0.0) {
-        let f_n = compute_wall_normal_force(left_overlap, p.vel.x, p.radius, p.mass_inv);
-        result.force.x += f_n;
-    }
-
-    // 右壁 (+X)
-    let right_overlap = p.pos.x + p.radius - box_max.x;
-    if (right_overlap > 0.0) {
-        let f_n = compute_wall_normal_force(right_overlap, -p.vel.x, p.radius, p.mass_inv);
-        result.force.x -= f_n;
-    }
-
-    // 前壁 (-Z)
-    let front_overlap = box_min.z + p.radius - p.pos.z;
-    if (front_overlap > 0.0) {
-        let f_n = compute_wall_normal_force(front_overlap, p.vel.z, p.radius, p.mass_inv);
-        result.force.z += f_n;
-    }
-
-    // 後壁 (+Z)
-    let back_overlap = p.pos.z + p.radius - box_max.z;
-    if (back_overlap > 0.0) {
-        let f_n = compute_wall_normal_force(back_overlap, -p.vel.z, p.radius, p.mass_inv);
-        result.force.z -= f_n;
-    }
-
-    // 仕切りとの接触（壁よりソフトな制約）
-    let divider_top = floor_y + params.divider_height;
-    if (p.pos.y - p.radius < divider_top) {
-        let half_thickness = params.divider_thickness * 0.5;
-        let dist_from_center = abs(p.pos.x);
-        let dist_to_face = dist_from_center - half_thickness;
-        let raw_overlap = p.radius - dist_to_face;
-
-        if (raw_overlap > 0.0) {
-            // 深いめり込みでも強い押し出しになりすぎないよう制限
-            let max_overlap = p.radius * 0.25;
-            let overlap = min(raw_overlap, max_overlap);
-
-            // x=0 付近では速度方向を優先して法線を決め、左右対称性を保つ
-            var sign = 1.0;
-            if (dist_from_center > 1e-8) {
-                sign = select(-1.0, 1.0, p.pos.x > 0.0);
-            } else if (abs(p.vel.x) > 1e-8) {
-                sign = select(1.0, -1.0, p.vel.x > 0.0);
-            } else {
-                sign = divider_tiebreak_sign(p.pos);
-            }
-
-            let v_n = sign * p.vel.x;
-            let divider_force_scale = 0.35;
-            let f_n = divider_force_scale
-                * compute_wall_normal_force(overlap, v_n, p.radius, p.mass_inv);
-            result.force.x += sign * f_n;
-
-            // 接線摩擦（Y-Z平面）も弱める
-            if (f_n > 0.0) {
-                let v_t = vec3<f32>(0.0, p.vel.y, p.vel.z);
-                let v_t_mag = length(v_t);
-                if (v_t_mag > 1e-6) {
-                    let f_t_max = params.wall_friction * 0.5 * f_n;
-                    let f_t = min(f_t_max, v_t_mag * params.wall_damping * 0.25);
-                    result.force -= f_t * (v_t / v_t_mag);
-                }
-            }
-        }
-    }
-
-    if (any(result.force != result.force)) {
-        result.force = vec3<f32>(0.0);
-    }
-    if (any(result.torque != result.torque)) {
-        result.torque = vec3<f32>(0.0);
-    }
-
+    let f=wall_surface(normal,overlap,p);result.force+=f.force;result.torque+=f.torque;
     return result;
 }
 
@@ -242,7 +100,7 @@ fn compute_contact(p: Particle, q: Particle) -> ContactResult {
     let e_eff = params.youngs_modulus / (2.0 * (1.0 - params.poisson_ratio * params.poisson_ratio));
 
     // 法線剛性 (Hertz): k_n = (4/3) * e_eff * sqrt(r_eff * overlap)
-    let k_n = (4.0 / 3.0) * e_eff * sqrt(r_eff) * sqrt(overlap);
+    let k_n = (4.0 / 3.0) * e_eff * sqrt(r_eff * overlap);
 
     // 法線弾性力: f_n_elastic = k_n * overlap
     let f_n_elastic = k_n * overlap;
@@ -264,10 +122,10 @@ fn compute_contact(p: Particle, q: Particle) -> ContactResult {
     // 法線力合計（引力にならないようクランプ）
     let f_n_total = max(f_n_elastic + f_n_damping, 0.0);
 
-    // 接触点での相対速度（角速度を考慮）— CPU版 contact.rs:168 と同等
-    let v_contact = rel_vel - v_n * n
-        - cross(p.omega, p.radius * n)
-        + cross(q.omega, q.radius * n);
+    // n は q -> p。CPU と同じ接触点の腕で相対速度とトルクを計算する。
+    let arm_p = -p.radius * n;
+    let arm_q = q.radius * n;
+    let v_contact = rel_vel + cross(p.omega, arm_p) - cross(q.omega, arm_q);
 
     // 接線速度
     let v_t = v_contact - dot(v_contact, n) * n;
@@ -285,41 +143,48 @@ fn compute_contact(p: Particle, q: Particle) -> ContactResult {
         f_t = -f_t_mag_clamped * v_t_dir;
     }
 
-    // 摩擦トルク — CPU版 contact.rs:214
-    var torque = cross(p.radius * n, f_t);
-
-    // 転がり抵抗 — CPU版 contact.rs:195-210
+    // 転がり抵抗
     let omega_rel = p.omega - q.omega;
     let omega_roll = omega_rel - dot(omega_rel, n) * n;
     let omega_roll_mag = length(omega_roll);
     let t_r_max = params.rolling_friction * f_n_elastic * r_eff;
 
+    var rolling_torque = vec3<f32>(0.0);
     if (omega_roll_mag > 1e-10) {
         let omega_roll_dir = omega_roll / omega_roll_mag;
         let omega_char = 10.0; // rad/s
         let viscous_coeff = t_r_max / omega_char;
         let t_viscous = viscous_coeff * omega_roll_mag;
         let t_r = min(t_viscous, t_r_max);
-        torque -= t_r * omega_roll_dir;
+        rolling_torque = -t_r * omega_roll_dir;
     }
 
-    result.force = f_n_total * n + f_t;
-    result.torque = torque;
+    let force = f_n_total * n + f_t;
+    let torque_p = cross(arm_p, f_t) + rolling_torque;
+    let torque_q = cross(arm_q, -f_t) - rolling_torque;
 
-    // CPU 実装と同様に接触力・トルクをクランプして数値暴走を防ぐ
+    // ペア共通の倍率で力・トルクを縮小する。相手側のスレッドでも
+    // 同じ倍率になり、大小粒子間でも作用反作用と摩擦の散逸を保つ。
     let max_accel = 1000.0;
-    let max_force = max_accel / p.mass_inv;
-    let force_mag = length(result.force);
-    if (force_mag > max_force && force_mag > 1e-10) {
-        result.force *= max_force / force_mag;
+    let max_force = max_accel / max(p.mass_inv, q.mass_inv);
+    let max_torque_p = (max_accel / p.mass_inv) * p.radius;
+    let max_torque_q = (max_accel / q.mass_inv) * q.radius;
+    var scale = 1.0;
+    let force_mag = length(force);
+    if (force_mag > max_force) {
+        scale = max_force / force_mag;
+    }
+    let torque_p_mag = length(torque_p);
+    if (torque_p_mag > max_torque_p) {
+        scale = min(scale, max_torque_p / torque_p_mag);
+    }
+    let torque_q_mag = length(torque_q);
+    if (torque_q_mag > max_torque_q) {
+        scale = min(scale, max_torque_q / torque_q_mag);
     }
 
-    let max_torque = max_force * p.radius;
-    let torque_mag = length(result.torque);
-    if (torque_mag > max_torque && torque_mag > 1e-10) {
-        result.torque *= max_torque / torque_mag;
-    }
-
+    result.force = force * scale;
+    result.torque = torque_p * scale;
     return result;
 }
 

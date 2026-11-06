@@ -89,7 +89,7 @@ pub struct SimulationParams {
     /// 壁剛性
     pub wall_stiffness: f32,
     /// パディング（uniformレイアウト安定化）
-    pub _pad_end: f32,
+    pub container_velocity: f32,
 }
 
 impl Default for SimulationParams {
@@ -116,7 +116,7 @@ impl Default for SimulationParams {
             wall_friction: 0.4,
             wall_damping: 20.0,
             wall_stiffness: 10000.0,
-            _pad_end: 0.0,
+            container_velocity: 0.0,
         }
     }
 }
