@@ -23,12 +23,71 @@ const COLOR_GPU: egui::Color32 = egui::Color32::from_rgb(106, 185, 255);
 const COLOR_CPU: egui::Color32 = egui::Color32::from_rgb(255, 176, 96);
 const COLOR_ACCENT: egui::Color32 = egui::Color32::from_rgb(128, 210, 255);
 const COLOR_RESET: egui::Color32 = egui::Color32::from_rgb(178, 72, 72);
-const PERF_SMOOTHING_TAU_SEC: f32 = 0.6;
+const PERF_SMOOTHING_TAU_SEC: f64 = 0.6;
 
-#[derive(Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct PerfDisplayState {
-    pub smoothed_fps: Option<f32>,
-    pub smoothed_steps_per_sec: Option<f32>,
+    pub smoothed_fps: Option<f64>,
+    pub smoothed_steps_per_sec: Option<f64>,
+    pub smoothed_speed: Option<f64>,
+    previous_sim_elapsed: Option<f64>,
+}
+
+impl PerfDisplayState {
+    /// Record once per rendered frame using uncapped wall-clock time.
+    /// GUI layout/render passes only read these metrics.
+    pub fn record_frame(&mut self, wall_dt: f64, sim_elapsed: f64, physics_dt: f64, paused: bool) {
+        let valid_wall_dt = wall_dt.is_finite() && wall_dt > 0.0;
+        let alpha = if valid_wall_dt {
+            -(-wall_dt / PERF_SMOOTHING_TAU_SEC).exp_m1()
+        } else {
+            0.0
+        };
+        if valid_wall_dt {
+            smooth_metric(&mut self.smoothed_fps, 1.0 / wall_dt, alpha);
+        } else {
+            self.smoothed_fps = None;
+        }
+
+        let previous = self.previous_sim_elapsed;
+        self.previous_sim_elapsed =
+            (sim_elapsed.is_finite() && sim_elapsed >= 0.0).then_some(sim_elapsed);
+        let reset = previous
+            .zip(self.previous_sim_elapsed)
+            .is_some_and(|(previous, current)| current < previous);
+        if paused || reset {
+            self.smoothed_speed = Some(0.0);
+            self.smoothed_steps_per_sec = Some(0.0);
+            return;
+        }
+
+        let Some((previous, current)) = previous.zip(self.previous_sim_elapsed) else {
+            self.smoothed_speed = None;
+            self.smoothed_steps_per_sec = None;
+            return;
+        };
+        if !valid_wall_dt {
+            self.smoothed_speed = None;
+            self.smoothed_steps_per_sec = None;
+            return;
+        }
+
+        let speed = (current - previous) / wall_dt;
+        smooth_metric(&mut self.smoothed_speed, speed, alpha);
+        if physics_dt.is_finite() && physics_dt > 0.0 {
+            smooth_metric(&mut self.smoothed_steps_per_sec, speed / physics_dt, alpha);
+        } else {
+            self.smoothed_steps_per_sec = None;
+        }
+    }
+}
+
+fn smooth_metric(smoothed: &mut Option<f64>, sample: f64, alpha: f64) {
+    *smoothed = if sample.is_finite() && sample >= 0.0 {
+        Some(smoothed.map_or(sample, |previous| previous + (sample - previous) * alpha))
+    } else {
+        None
+    };
 }
 
 #[derive(Clone, Copy)]
@@ -160,8 +219,7 @@ fn length_slider(
 /// Draw the Simulation Settings control panel.
 pub fn draw_control_panel(
     ctx: &egui::Context,
-    dt: f32,
-    perf_display: &mut PerfDisplayState,
+    perf_display: &PerfDisplayState,
     constants: &mut SimulationConstants,
     ui_ranges: &UiControlRanges,
     backend: &mut PhysicsBackend,
@@ -193,38 +251,25 @@ pub fn draw_control_panel(
                             .color(egui::Color32::WHITE)
                             .strong(),
                     );
-                    if dt > 0.0 && dt.is_finite() {
-                        let fps_instant = 1.0 / dt;
-                        let steps_instant =
-                            fps_instant * constants.settings.substeps_per_frame as f32;
-                        let alpha = 1.0 - (-dt / PERF_SMOOTHING_TAU_SEC).exp();
-
-                        let smoothed_fps = match perf_display.smoothed_fps {
-                            Some(prev) => prev + (fps_instant - prev) * alpha,
-                            None => fps_instant,
-                        };
-                        let smoothed_steps = match perf_display.smoothed_steps_per_sec {
-                            Some(prev) => prev + (steps_instant - prev) * alpha,
-                            None => steps_instant,
-                        };
-
-                        perf_display.smoothed_fps = Some(smoothed_fps);
-                        perf_display.smoothed_steps_per_sec = Some(smoothed_steps);
-
-                        let fps_text = format!("{:>3.0}", smoothed_fps);
-                        let steps_text = format!("{:>4.0}", smoothed_steps);
-                        ui.label(
-                            egui::RichText::new(format!("{fps_text} FPS  |  {steps_text} steps/s"))
-                                .color(egui::Color32::from_gray(190))
-                                .monospace(),
-                        );
-                    } else {
-                        ui.label(
-                            egui::RichText::new(format!("{:>3} FPS  |  {:>4} steps/s", "--", "--"))
-                                .color(egui::Color32::from_gray(160))
-                                .monospace(),
-                        );
-                    }
+                    let speed_text = perf_display
+                        .smoothed_speed
+                        .map_or_else(|| "--".to_owned(), |speed| format!("{speed:.2}x"));
+                    ui.label(
+                        egui::RichText::new(format!("Speed: {speed_text}"))
+                            .color(egui::Color32::from_gray(190))
+                            .monospace(),
+                    );
+                    let fps_text = perf_display
+                        .smoothed_fps
+                        .map_or_else(|| " --".to_owned(), |fps| format!("{fps:>3.0}"));
+                    let steps_text = perf_display
+                        .smoothed_steps_per_sec
+                        .map_or_else(|| "  --".to_owned(), |steps| format!("{steps:>4.0}"));
+                    ui.label(
+                        egui::RichText::new(format!("{fps_text} FPS  |  {steps_text} steps/s"))
+                            .color(egui::Color32::from_gray(190))
+                            .monospace(),
+                    );
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let (mode_label, mode_color) = match *backend {
@@ -253,22 +298,6 @@ pub fn draw_control_panel(
                         *backend = selected_backend;
                     }
                 });
-                ui.add_space(6.0);
-                let step_min = ui_ranges.substeps_per_frame.min.max(1);
-                let step_max = ui_ranges.substeps_per_frame.max.max(step_min);
-                let step_step = ui_ranges.substeps_per_frame.step.max(1);
-                constants.settings.substeps_per_frame = constants
-                    .settings
-                    .substeps_per_frame
-                    .clamp(step_min, step_max);
-                ui.add(
-                    egui::Slider::new(
-                        &mut constants.settings.substeps_per_frame,
-                        step_min..=step_max,
-                    )
-                    .step_by(step_step as f64)
-                    .text("Substeps / Frame"),
-                );
             });
 
             settings_section(ui, "Oscillation", false, |ui| {
@@ -418,6 +447,126 @@ pub fn draw_control_panel(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_rate(actual: Option<f64>, expected: f64) {
+        assert!((actual.expect("rate should be available") - expected).abs() < 1e-9);
+    }
+
+    #[test]
+    fn performance_uses_actual_progress_and_uncapped_wall_time() {
+        let mut performance = PerfDisplayState::default();
+        performance.record_frame(0.5, 4.0, 0.0004, false);
+        assert_eq!(performance.smoothed_speed, None);
+        assert_eq!(performance.smoothed_steps_per_sec, None);
+        performance.record_frame(0.5, 4.15, 0.0004, false);
+        assert_rate(performance.smoothed_fps, 2.0);
+        assert_rate(performance.smoothed_speed, 0.3);
+        assert_rate(performance.smoothed_steps_per_sec, 750.0);
+
+        // A frame with no physics work contributes zero, regardless of the work cap.
+        performance.record_frame(0.5, 4.15, 0.0004, false);
+        let decay = (-0.5 / PERF_SMOOTHING_TAU_SEC).exp();
+        assert_rate(performance.smoothed_speed, 0.3 * decay);
+        assert_rate(performance.smoothed_steps_per_sec, 750.0 * decay);
+    }
+
+    #[test]
+    fn pause_and_reset_clear_stale_simulation_rates() {
+        let mut performance = PerfDisplayState::default();
+        performance.record_frame(0.1, 0.0, 0.001, false);
+        performance.record_frame(0.1, 0.1, 0.001, false);
+        assert_rate(performance.smoothed_speed, 1.0);
+        performance.record_frame(0.1, 0.1, 0.001, true);
+        assert_rate(performance.smoothed_speed, 0.0);
+        assert_rate(performance.smoothed_steps_per_sec, 0.0);
+        assert_rate(performance.smoothed_fps, 10.0);
+
+        performance.record_frame(0.1, 0.2, 0.001, false);
+        assert!(performance.smoothed_speed.unwrap() > 0.0);
+        performance.record_frame(0.1, 0.0, 0.001, false);
+        assert_rate(performance.smoothed_speed, 0.0);
+        assert_rate(performance.smoothed_steps_per_sec, 0.0);
+        performance.record_frame(0.1, 0.0, 0.001, false);
+        assert_rate(performance.smoothed_speed, 0.0);
+    }
+
+    #[test]
+    fn invalid_performance_samples_do_not_produce_nonfinite_rates() {
+        for bad_wall_dt in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            let mut performance = PerfDisplayState::default();
+            performance.record_frame(0.1, 0.0, 0.001, false);
+            performance.record_frame(bad_wall_dt, 0.1, 0.001, false);
+            assert_eq!(performance.smoothed_fps, None);
+            assert_eq!(performance.smoothed_speed, None);
+            assert_eq!(performance.smoothed_steps_per_sec, None);
+            performance.record_frame(0.1, 0.13, 0.001, false);
+            assert_rate(performance.smoothed_speed, 0.3);
+        }
+        for bad_elapsed in [-1.0, f64::NAN, f64::INFINITY] {
+            let mut performance = PerfDisplayState::default();
+            performance.record_frame(0.1, 0.0, 0.001, false);
+            performance.record_frame(0.1, bad_elapsed, 0.001, false);
+            assert_eq!(performance.smoothed_speed, None);
+            assert_eq!(performance.smoothed_steps_per_sec, None);
+            performance.record_frame(0.1, 0.1, 0.001, false);
+            assert_eq!(performance.smoothed_speed, None);
+        }
+        let mut performance = PerfDisplayState::default();
+        performance.record_frame(0.1, 0.0, 0.0, false);
+        performance.record_frame(0.1, 0.03, 0.0, false);
+        assert_rate(performance.smoothed_speed, 0.3);
+        assert_eq!(performance.smoothed_steps_per_sec, None);
+    }
+
+    #[test]
+    fn repeated_gui_passes_only_display_recorded_performance() {
+        let ctx = egui::Context::default();
+        let mut performance = PerfDisplayState::default();
+        performance.record_frame(0.1, 0.0, 0.001, false);
+        performance.record_frame(0.1, 0.03, 0.001, false);
+        let recorded = performance.clone();
+        let mut constants = SimulationConstants::default();
+        let ranges = UiControlRanges::default();
+        let mut backend = PhysicsBackend::Gpu;
+        let mut state = SimulationState::default();
+        for frame in 0..4 {
+            let output = ctx.run_pass(
+                egui::RawInput {
+                    time: Some(f64::from(frame)),
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1280.0, 900.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    draw_control_panel(
+                        ctx,
+                        &performance,
+                        &mut constants,
+                        &ranges,
+                        &mut backend,
+                        &mut state,
+                    );
+                },
+            );
+            assert_eq!(performance, recorded);
+            // egui hides a new window's initial sizing pass. Subsequent frames
+            // are visible, and the deterministic time also completes fade-in.
+            if frame == 0 {
+                continue;
+            }
+            let text: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect();
+            assert!(text.contains(&"Speed: 0.30x"), "rendered text: {text:?}");
+        }
+    }
 
     fn draw_length_slider(
         ctx: &egui::Context,

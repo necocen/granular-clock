@@ -22,18 +22,3 @@ impl Default for SimulationTimeParams {
         }
     }
 }
-
-/// シミュレーション設定
-#[derive(Clone, Copy)]
-pub struct SimulationSettings {
-    /// 1フレームあたりのサブステップ数
-    pub substeps_per_frame: u32,
-}
-
-impl Default for SimulationSettings {
-    fn default() -> Self {
-        Self {
-            substeps_per_frame: 3, // 3サブステップ/フレーム
-        }
-    }
-}

@@ -232,8 +232,8 @@ fn clamp_particles(
     });
 }
 
-/// 物理サブステップを実行する（純粋関数版）
-pub fn run_physics_substeps_plain(
+/// 固定時間刻みの物理ステップを1回実行する（純粋関数版）
+pub fn run_physics_step_plain(
     constants: &SimulationConstants,
     particles: &mut ParticleStore,
     contact_history: &mut ContactHistory,
@@ -245,7 +245,6 @@ pub fn run_physics_substeps_plain(
         return;
     }
 
-    let substeps = constants.settings.substeps_per_frame;
     let material = constants.material;
     let physics = constants.physics;
     let wall_props = constants.wall;
@@ -253,39 +252,83 @@ pub fn run_physics_substeps_plain(
     let osc_params = &constants.oscillation;
     let dt = constants.time.dt;
 
-    for _ in 0..substeps {
-        crate::simulation::constants::oscillation::update_container_velocity(sim_state, osc_params);
-        build_spatial_grid(grid, particles);
-        clear_forces(particles);
-        compute_particle_collisions(particles, grid, contact_history, &material, dt);
-        compute_wall_collisions(
-            particles,
-            container_params,
-            sim_state.container_offset,
-            &wall_props,
-            sim_state.container_velocity,
+    crate::simulation::constants::oscillation::update_container_velocity(sim_state, osc_params);
+    build_spatial_grid(grid, particles);
+    clear_forces(particles);
+    compute_particle_collisions(particles, grid, contact_history, &material, dt);
+    compute_wall_collisions(
+        particles,
+        container_params,
+        sim_state.container_offset,
+        &wall_props,
+        sim_state.container_velocity,
+    );
+    integrate_positions(particles, &physics, dt);
+    advance_oscillation(sim_state, osc_params, dt);
+    // 後半ステップの力計算は更新後の位置に対して行う
+    build_spatial_grid(grid, particles);
+    clear_forces(particles);
+    compute_particle_collisions(particles, grid, contact_history, &material, dt);
+    compute_wall_collisions(
+        particles,
+        container_params,
+        sim_state.container_offset,
+        &wall_props,
+        sim_state.container_velocity,
+    );
+    integrate_velocities(particles, &physics, dt);
+    clamp_particles(
+        particles,
+        container_params,
+        sim_state.container_offset,
+        sim_state.container_velocity,
+    );
+    contact_history.cleanup();
+    sim_state.step_time(dt);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::physics::ParticleSize;
+
+    #[test]
+    fn step_advances_once_and_pause_preserves_state() {
+        let mut constants = SimulationConstants::default();
+        constants.time.dt = 0.001;
+        constants.physics.gravity = Vec3::new(0.0, -10.0, 0.0);
+        constants.container.divider_height = 0.0;
+        constants.oscillation.enabled = false;
+        let mut particles = ParticleStore::default();
+        particles.spawn(Vec3::new(0.1, 0.1, 0.0), 0.01, 2500.0, ParticleSize::Large);
+        let mut history = ContactHistory::default();
+        let mut state = SimulationState::default();
+        let mut grid = SpatialHashGrid::new(constants.grid.cell_size, constants.grid.table_size);
+
+        run_physics_step_plain(
+            &constants,
+            &mut particles,
+            &mut history,
+            &mut state,
+            &mut grid,
         );
-        integrate_positions(particles, &physics, dt);
-        advance_oscillation(sim_state, osc_params, dt);
-        // 後半ステップの力計算は更新後の位置に対して行う
-        build_spatial_grid(grid, particles);
-        clear_forces(particles);
-        compute_particle_collisions(particles, grid, contact_history, &material, dt);
-        compute_wall_collisions(
-            particles,
-            container_params,
-            sim_state.container_offset,
-            &wall_props,
-            sim_state.container_velocity,
+        assert_eq!(state.elapsed, f64::from(constants.time.dt));
+        let particle = &particles.particles[0];
+        assert!((particle.position.y - 0.099995).abs() < 1e-7);
+        assert!((particle.velocity.y + 0.01).abs() < 1e-7);
+        let position = particle.position;
+        let velocity = particle.velocity;
+
+        state.paused = true;
+        run_physics_step_plain(
+            &constants,
+            &mut particles,
+            &mut history,
+            &mut state,
+            &mut grid,
         );
-        integrate_velocities(particles, &physics, dt);
-        clamp_particles(
-            particles,
-            container_params,
-            sim_state.container_offset,
-            sim_state.container_velocity,
-        );
-        contact_history.cleanup();
-        sim_state.step_time(dt);
+        assert_eq!(state.elapsed, f64::from(constants.time.dt));
+        assert_eq!(particles.particles[0].position, position);
+        assert_eq!(particles.particles[0].velocity, velocity);
     }
 }
