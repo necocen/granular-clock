@@ -1,10 +1,7 @@
 //! GPU physics state: combines buffer management, compute dispatch, and instance writing.
 
 use std::num::NonZeroU64;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::{Arc, Mutex};
 
 use super::buffers::{GpuPhysicsBuffers, ParticleGpu, SimulationParams, SortParamsGpu};
 use super::pipeline::GpuPhysicsPipelines;
@@ -57,7 +54,7 @@ struct ReadbackStaging {
     copy_pending: bool,
     /// map_async が発行済み（完了待ち）
     map_requested: bool,
-    mapping_complete: Arc<AtomicBool>,
+    mapping_result: Arc<Mutex<Option<Result<(), wgpu::BufferAsyncError>>>>,
     num_particles: u32,
     frame_counter: u32,
 }
@@ -193,7 +190,7 @@ impl GpuPhysicsState {
                 size: staging_size,
                 copy_pending: false,
                 map_requested: false,
-                mapping_complete: Arc::new(AtomicBool::new(false)),
+                mapping_result: Arc::new(Mutex::new(None)),
                 num_particles: 0,
                 frame_counter: 0,
             }),
@@ -213,7 +210,9 @@ impl GpuPhysicsState {
         particles: &[ParticleGpu],
         instance_buffer: &wgpu::Buffer,
     ) {
+        self.discard_readback();
         if particles.is_empty() {
+            self.buffers.num_particles = 0;
             return;
         }
 
@@ -239,7 +238,7 @@ impl GpuPhysicsState {
                 size: staging_size,
                 copy_pending: false,
                 map_requested: false,
-                mapping_complete: Arc::new(AtomicBool::new(false)),
+                mapping_result: Arc::new(Mutex::new(None)),
                 num_particles: 0,
                 frame_counter: 0,
             });
@@ -730,7 +729,37 @@ impl GpuPhysicsState {
         pass.dispatch_workgroups(workgroups, 1, 1);
     }
 
-    /// Readback: particles_a をステージングバッファにコピー（N 描画フレームに1回）。
+    /// 未完了・取得済みの読み戻しを破棄する。リセットや再アップロード時に呼ぶ。
+    pub fn discard_readback(&mut self) {
+        if let Some(staging) = &mut self.staging {
+            let map_failed = matches!(*staging.mapping_result.lock().unwrap(), Some(Err(_)));
+            // wgpu は未マップの unmap をエラーにする。要求待ち・成功済みだけ解除する。
+            if staging.map_requested && !map_failed {
+                staging.buffer.unmap();
+            }
+            staging.copy_pending = false;
+            staging.map_requested = false;
+            // キャンセルされた古い map のコールバックが新しい要求に触れないようにする。
+            staging.mapping_result = Arc::new(Mutex::new(None));
+            staging.num_particles = 0;
+            staging.frame_counter = 0;
+        }
+        self.readback_data.write().unwrap().clear();
+        *self.readback_frame.write().unwrap() = 0;
+        self.last_readback_frame = 0;
+    }
+
+    /// GPU→CPU 切替のため、通常の間引きをせず最新の粒子をコピーする。
+    /// submit 後に process_readback / apply_readback_to_store で取得を待つ。
+    pub fn begin_handoff(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> Result<(), &'static str> {
+        self.discard_readback();
+        self.copy_readback(encoder)
+    }
+
+    /// Readback: 最新の粒子をステージングバッファにコピー（N 描画フレームに1回）。
     ///
     /// copy_buffer_to_buffer のみエンコードする。
     /// map_async は submit 後に `process_readback` で発行する。
@@ -750,11 +779,19 @@ impl GpuPhysicsState {
         }
         staging.frame_counter = 0;
 
-        let particle_size = std::mem::size_of::<ParticleGpu>() as u64;
-        let copy_size = particle_size * self.buffers.num_particles as u64;
+        // 通常の表示更新では、読み戻し不能なら次の描画で再試行する。
+        let _ = self.copy_readback(encoder);
+    }
 
+    fn copy_readback(&mut self, encoder: &mut wgpu::CommandEncoder) -> Result<(), &'static str> {
+        let staging = self.staging.as_mut().ok_or("readback buffer is missing")?;
+        if self.buffers.num_particles == 0 {
+            return Err("no GPU particles to read back");
+        }
+        let copy_size =
+            std::mem::size_of::<ParticleGpu>() as u64 * self.buffers.num_particles as u64;
         if copy_size > staging.size {
-            return;
+            return Err("readback buffer is too small");
         }
 
         encoder.copy_buffer_to_buffer(
@@ -767,41 +804,46 @@ impl GpuPhysicsState {
 
         staging.num_particles = self.buffers.num_particles;
         staging.copy_pending = true;
+        Ok(())
     }
 
     /// Submit 後に呼ぶ。copy 完了後に map_async を発行し、マッピング完了時にデータを読み取る。
-    pub fn process_readback(&mut self, device: &wgpu::Device) {
-        let _ = device.poll(wgpu::PollType::Poll);
+    pub fn process_readback(&mut self, device: &wgpu::Device) -> Result<(), String> {
+        device
+            .poll(wgpu::PollType::Poll)
+            .map_err(|error| format!("GPU readback poll failed: {error}"))?;
 
         let Some(ref mut staging) = self.staging else {
-            return;
+            return Ok(());
         };
 
         // ステート: copy_pending=true, map_requested=false → map_async を発行
         if staging.copy_pending && !staging.map_requested {
             staging.copy_pending = false;
             staging.map_requested = true;
-            staging.mapping_complete.store(false, Ordering::SeqCst);
+            *staging.mapping_result.lock().unwrap() = None;
 
             let particle_size = std::mem::size_of::<ParticleGpu>() as u64;
             let copy_size = particle_size * staging.num_particles as u64;
-            let mapping_complete = staging.mapping_complete.clone();
+            let mapping_result = staging.mapping_result.clone();
             let buffer_slice = staging.buffer.slice(0..copy_size);
             buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-                if result.is_ok() {
-                    mapping_complete.store(true, Ordering::SeqCst);
-                }
+                *mapping_result.lock().unwrap() = Some(result);
             });
-            return;
+            return Ok(());
         }
 
         // ステート: map_requested=true → 完了チェック
         if !staging.map_requested {
-            return;
+            return Ok(());
         }
 
-        if !staging.mapping_complete.load(Ordering::SeqCst) {
-            return;
+        let Some(result) = staging.mapping_result.lock().unwrap().take() else {
+            return Ok(());
+        };
+        if let Err(error) = result {
+            staging.map_requested = false;
+            return Err(format!("GPU readback mapping failed: {error}"));
         }
 
         // マッピング完了: データ読み取り
@@ -812,7 +854,7 @@ impl GpuPhysicsState {
         let buffer_slice = staging.buffer.slice(0..byte_len as u64);
         let data = buffer_slice
             .get_mapped_range()
-            .expect("completed readback buffer should be mapped");
+            .map_err(|error| format!("GPU readback range failed: {error}"))?;
 
         if data.len() >= byte_len {
             let particles: &[ParticleGpu] = bytemuck::cast_slice(&data[..byte_len]);
@@ -830,34 +872,34 @@ impl GpuPhysicsState {
         drop(data);
         staging.buffer.unmap();
         staging.map_requested = false;
-        staging.mapping_complete.store(false, Ordering::SeqCst);
+        Ok(())
     }
 
-    /// 読み戻しデータから ParticleStore を更新
-    pub fn apply_readback_to_store(&mut self, store: &mut crate::physics::ParticleStore) {
+    /// 新しい読み戻しを ParticleStore に適用したときだけ true を返す。
+    pub fn apply_readback_to_store(&mut self, store: &mut crate::physics::ParticleStore) -> bool {
         let current_frame = {
             let guard = self.readback_frame.read().unwrap();
             *guard
         };
 
         if current_frame == self.last_readback_frame || current_frame == 0 {
-            return;
+            return false;
+        }
+
+        let guard = self.readback_data.read().unwrap();
+        if guard.is_empty() || guard.len() != store.particles.len() {
+            return false;
         }
         self.last_readback_frame = current_frame;
 
-        let guard = self.readback_data.read().unwrap();
-        if guard.is_empty() {
-            return;
-        }
-
-        let num = guard.len().min(store.particles.len());
-        for i in 0..num {
+        for i in 0..guard.len() {
             let gp = &guard[i];
             let p = &mut store.particles[i];
             p.position = glam::Vec3::new(gp.pos[0], gp.pos[1], gp.pos[2]);
             p.velocity = glam::Vec3::new(gp.vel[0], gp.vel[1], gp.vel[2]);
             p.angular_velocity = glam::Vec3::new(gp.omega[0], gp.omega[1], gp.omega[2]);
         }
+        true
     }
 
     /// Instance writer bind group を再構築（instance buffer が変わった場合）
