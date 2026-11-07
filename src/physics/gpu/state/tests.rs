@@ -45,6 +45,113 @@ fn read_particles(
     particles
 }
 
+fn finish_readback(device: &wgpu::Device, gpu: &mut GpuPhysicsState) {
+    gpu.process_readback(device).unwrap();
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    gpu.process_readback(device).unwrap();
+}
+
+#[test]
+#[ignore = "requires native GPU adapter/device for readback lifecycle regression"]
+fn reset_discards_completed_and_pending_readbacks_before_fresh_handoff() {
+    let (device, queue) = pollster::block_on(async {
+        let instance = wgpu::Instance::default();
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions::default())
+            .await
+            .expect("GPU adapter required for readback regression test");
+        adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                required_limits: wgpu::Limits::default(),
+                ..Default::default()
+            })
+            .await
+            .expect("GPU device required for readback regression test")
+    });
+    let constants = crate::simulation::config_toml::load_embedded_config().simulation;
+    let instances = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("readback_test_instances"),
+        size: 4096,
+        usage: wgpu::BufferUsages::STORAGE,
+        mapped_at_creation: false,
+    });
+    let mut gpu = GpuPhysicsState::new(&device, &constants, &instances);
+    let initial = Particle::new(
+        Vec3::new(-0.05, 0.1, 0.0),
+        0.01,
+        2000.0,
+        ParticleSize::Large,
+    );
+    gpu.upload_particles(&device, &queue, &[to_gpu(&initial)], &instances);
+    let capacity = gpu.buffers.capacity;
+
+    // Display sampling remains one copy per four eligible render calls.
+    let mut encoder = device.create_command_encoder(&Default::default());
+    for _ in 0..3 {
+        gpu.encode_readback(&mut encoder);
+        assert!(!gpu.staging.as_ref().unwrap().copy_pending);
+    }
+    gpu.encode_readback(&mut encoder);
+    assert!(gpu.staging.as_ref().unwrap().copy_pending);
+    queue.submit([encoder.finish()]);
+    finish_readback(&device, &mut gpu);
+    assert_eq!(gpu.readback_data.read().unwrap().len(), 1);
+
+    // A reset with the same capacity must discard even a completed old snapshot.
+    let mut reset_particle = initial.clone();
+    reset_particle.position.x = 0.07;
+    let mut store = ParticleStore {
+        particles: vec![reset_particle.clone()],
+        generation: 1,
+    };
+    gpu.upload_particles(&device, &queue, &[to_gpu(&reset_particle)], &instances);
+    assert_eq!(gpu.buffers.capacity, capacity);
+    assert!(!gpu.apply_readback_to_store(&mut store));
+    assert_eq!(store.particles[0].position, reset_particle.position);
+
+    // Handoff bypasses the four-frame gate. Cancel its map before processing it.
+    let mut encoder = device.create_command_encoder(&Default::default());
+    gpu.begin_handoff(&mut encoder).unwrap();
+    assert!(gpu.staging.as_ref().unwrap().copy_pending);
+    queue.submit([encoder.finish()]);
+    gpu.process_readback(&device).unwrap();
+    assert!(gpu.staging.as_ref().unwrap().map_requested);
+    let old_callback = gpu.staging.as_ref().unwrap().mapping_result.clone();
+
+    let mut latest = reset_particle.clone();
+    latest.position = Vec3::new(0.09, 0.12, 0.01);
+    latest.velocity = Vec3::new(-0.3, 0.2, 0.1);
+    latest.angular_velocity = Vec3::new(2.0, 3.0, 4.0);
+    store.particles[0] = latest.clone();
+    gpu.upload_particles(&device, &queue, &[to_gpu(&latest)], &instances);
+    assert!(!Arc::ptr_eq(
+        &old_callback,
+        &gpu.staging.as_ref().unwrap().mapping_result
+    ));
+
+    // Reuse the staging buffer immediately after cancellation; a late callback
+    // from the old map must not complete or overwrite this fresh handoff.
+    let mut encoder = device.create_command_encoder(&Default::default());
+    gpu.begin_handoff(&mut encoder).unwrap();
+    queue.submit([encoder.finish()]);
+    assert!(!gpu.apply_readback_to_store(&mut store));
+    finish_readback(&device, &mut gpu);
+    store.particles[0] = initial;
+    assert!(gpu.apply_readback_to_store(&mut store));
+    assert_eq!(store.particles[0].position, latest.position);
+    assert_eq!(store.particles[0].velocity, latest.velocity);
+    assert_eq!(store.particles[0].angular_velocity, latest.angular_velocity);
+    assert!(!gpu.apply_readback_to_store(&mut store));
+
+    // Explicit reset cancellation also discards a ready, unapplied snapshot.
+    let mut encoder = device.create_command_encoder(&Default::default());
+    gpu.begin_handoff(&mut encoder).unwrap();
+    queue.submit([encoder.finish()]);
+    finish_readback(&device, &mut gpu);
+    gpu.discard_readback();
+    assert!(!gpu.apply_readback_to_store(&mut store));
+}
+
 fn assert_close(label: &str, field: &str, actual: Vec3, expected: Vec3, tolerance: f32) {
     assert!(
         actual.distance(expected) <= tolerance * expected.length().max(1.0),
