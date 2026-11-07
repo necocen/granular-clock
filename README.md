@@ -92,7 +92,8 @@ Catch-up work is bounded to four ticks
 unlimited backlog. There is no adjustable substep cap.
 
 Particle-to-instance conversion and display readback run during rendering,
-instead of every physics tick.
+instead of every physics tick. Switching from GPU to CPU waits for a fresh
+asynchronous snapshot, including when no display frames are being drawn.
 Redraw requests coalesce until a frame is available, without a fixed frame-rate
 cap or a fixed number of physics steps per frame.
 
