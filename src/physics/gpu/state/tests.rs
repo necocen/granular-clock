@@ -1,7 +1,7 @@
 use super::*;
 use crate::physics::{
     Particle, ParticleSize, ParticleStore,
-    cpu::{ContactHistory, SpatialHashGrid, run_physics_substeps_plain},
+    cpu::{ContactHistory, SpatialHashGrid, run_physics_step_plain},
 };
 use crate::simulation::state::SimulationState;
 use glam::Vec3;
@@ -80,7 +80,7 @@ fn compare_steps(
     // Exercise the production grid, sorting, collision and both Verlet half steps.
     for step in 0..10 {
         let start_phase = state.oscillation_phase;
-        run_physics_substeps_plain(constants, &mut store, &mut history, &mut state, &mut grid);
+        run_physics_step_plain(constants, &mut store, &mut history, &mut state, &mut grid);
         state.oscillation_frame_start_phase = start_phase;
         let mut encoder = device.create_command_encoder(&Default::default());
         gpu.encode_compute(device, queue, &mut encoder, constants, &state);
@@ -141,7 +141,6 @@ fn rotating_and_mixed_size_contacts_match_cpu_and_conserve_momentum() {
     c.oscillation.enabled = false;
     c.physics.gravity = Vec3::ZERO;
     c.container.divider_height = 0.0;
-    c.settings.substeps_per_frame = 1;
     c.material.rolling_friction = 0.0;
     for dt in [1e-5, c.time.dt] {
         c.time.dt = dt;

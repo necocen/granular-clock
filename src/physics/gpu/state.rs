@@ -81,9 +81,6 @@ pub struct GpuPhysicsState {
     cached_sort_stride: u32,
     sort_params_dirty: bool,
 
-    // Substeps
-    substeps: u32,
-
     // Readback
     staging: Option<ReadbackStaging>,
     /// 読み戻したデータ（共有）
@@ -191,7 +188,6 @@ impl GpuPhysicsState {
             cached_sort_count: 0,
             cached_sort_stride: 0,
             sort_params_dirty: false,
-            substeps: constants.settings.substeps_per_frame,
             staging: Some(ReadbackStaging {
                 buffer: staging_buffer,
                 size: staging_size,
@@ -327,8 +323,6 @@ impl GpuPhysicsState {
 
         let params_bytes = bytemuck::bytes_of(&params);
         queue.write_buffer(&self.buffers.params, 0, params_bytes);
-
-        self.substeps = constants.settings.substeps_per_frame;
     }
 
     /// Bind group を再構築
@@ -467,7 +461,7 @@ impl GpuPhysicsState {
         self.sort_params_dirty = false;
     }
 
-    /// Compute pass をエンコード（物理サブステップ + instance writer）
+    /// 1物理ステップのVerlet前半・後半をエンコードする。
     pub fn encode_compute(
         &mut self,
         device: &wgpu::Device,
@@ -503,8 +497,8 @@ impl GpuPhysicsState {
         let workgroups_sort_256 = sort_count.div_ceil(256);
         let params_size = std::mem::size_of::<SimulationParams>() as u64;
 
-        // サブステップごとの params を一括で作成
-        let substep_params = {
+        // 前半・後半それぞれの力評価時刻のparamsを固定する。
+        let force_time_params = {
             use crate::simulation::constants::{
                 advance_oscillation_phase, oscillation_displacement,
             };
@@ -550,93 +544,63 @@ impl GpuPhysicsState {
             };
 
             let mut phase = sim_state.oscillation_frame_start_phase;
-            let mut params_list = Vec::with_capacity(self.substeps as usize);
-            for _ in 0..self.substeps {
-                let mut runtime_params = base_params;
-                if osc_params.enabled {
-                    runtime_params.container_offset = container_params.base_position.y
-                        + oscillation_displacement(osc_params.amplitude, phase);
-                }
-                runtime_params.container_velocity = if osc_params.enabled {
-                    osc_params.amplitude
-                        * std::f32::consts::TAU
-                        * osc_params.frequency
-                        * phase.cos()
-                } else {
-                    0.0
-                };
-                params_list.push(runtime_params);
-                advance_oscillation_phase(&mut phase, osc_params.frequency, time_params.dt);
-                if osc_params.enabled {
-                    runtime_params.container_offset = container_params.base_position.y
-                        + oscillation_displacement(osc_params.amplitude, phase);
-                }
-                runtime_params.container_velocity = if osc_params.enabled {
-                    osc_params.amplitude
-                        * std::f32::consts::TAU
-                        * osc_params.frequency
-                        * phase.cos()
-                } else {
-                    0.0
-                };
-                params_list.push(runtime_params);
+            let mut runtime_params = base_params;
+            if osc_params.enabled {
+                runtime_params.container_offset = container_params.base_position.y
+                    + oscillation_displacement(osc_params.amplitude, phase);
             }
-            params_list
+            runtime_params.container_velocity = if osc_params.enabled {
+                osc_params.amplitude * std::f32::consts::TAU * osc_params.frequency * phase.cos()
+            } else {
+                0.0
+            };
+            let first_half_params = runtime_params;
+            advance_oscillation_phase(&mut phase, osc_params.frequency, time_params.dt);
+            if osc_params.enabled {
+                runtime_params.container_offset = container_params.base_position.y
+                    + oscillation_displacement(osc_params.amplitude, phase);
+            }
+            runtime_params.container_velocity = if osc_params.enabled {
+                osc_params.amplitude * std::f32::consts::TAU * osc_params.frequency * phase.cos()
+            } else {
+                0.0
+            };
+            [first_half_params, runtime_params]
         };
 
-        let params_upload = if !substep_params.is_empty() {
-            Some(GpuPhysicsBuffers::create_params_upload_buffer(
-                device,
-                &substep_params,
-            ))
-        } else {
-            None
-        };
+        // Immutable upload per tick preserves both snapshots even when ticks queue up.
+        let params_upload =
+            GpuPhysicsBuffers::create_params_upload_buffer(device, &force_time_params);
+        encoder.copy_buffer_to_buffer(&params_upload, 0, &self.buffers.params, 0, params_size);
 
-        // Encode substeps
-        for substep_idx in 0..self.substeps {
-            // params 上書き
-            if let Some(upload) = params_upload.as_ref() {
-                encoder.copy_buffer_to_buffer(
-                    upload,
-                    (2 * substep_idx) as u64 * params_size,
-                    &self.buffers.params,
-                    0,
-                    params_size,
-                );
-            }
+        // 前半（A -> B）
+        self.encode_half_step(
+            encoder,
+            bind_groups,
+            &bind_groups.particles[0],
+            &self.pipelines.integrate_first_half_pipeline,
+            workgroups_particles_64,
+            workgroups_sort_64,
+            workgroups_sort_256,
+        );
 
-            // 前半（A -> B）
-            self.encode_half_step(
-                encoder,
-                bind_groups,
-                &bind_groups.particles[0],
-                &self.pipelines.integrate_first_half_pipeline,
-                workgroups_particles_64,
-                workgroups_sort_64,
-                workgroups_sort_256,
-            );
-
-            if let Some(upload) = params_upload.as_ref() {
-                encoder.copy_buffer_to_buffer(
-                    upload,
-                    (2 * substep_idx + 1) as u64 * params_size,
-                    &self.buffers.params,
-                    0,
-                    params_size,
-                );
-            }
-            // 後半（B -> A）
-            self.encode_half_step(
-                encoder,
-                bind_groups,
-                &bind_groups.particles[1],
-                &self.pipelines.integrate_second_half_pipeline,
-                workgroups_particles_64,
-                workgroups_sort_64,
-                workgroups_sort_256,
-            );
-        }
+        encoder.copy_buffer_to_buffer(
+            &params_upload,
+            params_size,
+            &self.buffers.params,
+            0,
+            params_size,
+        );
+        // 後半（B -> A）
+        self.encode_half_step(
+            encoder,
+            bind_groups,
+            &bind_groups.particles[1],
+            &self.pipelines.integrate_second_half_pipeline,
+            workgroups_particles_64,
+            workgroups_sort_64,
+            workgroups_sort_256,
+        );
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -766,7 +730,7 @@ impl GpuPhysicsState {
         pass.dispatch_workgroups(workgroups, 1, 1);
     }
 
-    /// Readback: particles_a をステージングバッファにコピー（N フレームに1回）。
+    /// Readback: particles_a をステージングバッファにコピー（N 描画フレームに1回）。
     ///
     /// copy_buffer_to_buffer のみエンコードする。
     /// map_async は submit 後に `process_readback` で発行する。

@@ -7,8 +7,8 @@ use serde::{Deserialize, Deserializer};
 
 use crate::simulation::constants::{
     CameraSettings, ContainerParams, LightSettings, MaterialProperties, OscillationParams,
-    PhysicsConstants, SimulationConfig, SimulationConstants, SimulationSettings,
-    SimulationTimeParams, UiControlRanges, UiIntRange, UiSliderRange, WallProperties,
+    PhysicsConstants, SimulationConfig, SimulationConstants, SimulationTimeParams, UiControlRanges,
+    UiSliderRange, WallProperties,
 };
 
 const EMBEDDED_CONFIG_TOML: &str = include_str!("../../simulation.toml");
@@ -102,7 +102,6 @@ struct RawOscillation {
 #[derive(Debug, Deserialize)]
 struct RawStep {
     dt: f32,
-    substeps_per_frame: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -127,17 +126,11 @@ type RawContainerMaterial = RawWall;
 
 #[derive(Debug, Deserialize)]
 struct RawUi {
-    step: Option<RawUiStep>,
     oscillation: RawUiOscillation,
     container: Option<RawUiContainer>,
     camera: Option<RawUiCamera>,
     light: Option<RawUiLight>,
     contact: Option<RawUiContact>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RawUiStep {
-    substeps_per_frame: RawUiIntRange,
 }
 
 #[derive(Debug, Deserialize)]
@@ -182,13 +175,6 @@ struct RawUiSliderRange {
     min: f32,
     max: f32,
     step: f32,
-}
-
-#[derive(Debug, Deserialize, Clone, Copy)]
-struct RawUiIntRange {
-    min: u32,
-    max: u32,
-    step: u32,
 }
 
 // TOML lengths are in mm; validation, defaults and physics continue to use m.
@@ -386,18 +372,6 @@ fn convert_raw_config(raw: RawRoot, source_name: &str) -> LoadedConfig {
             });
 
     let ui_ranges = UiControlRanges {
-        substeps_per_frame: raw.ui.step.as_ref().map_or(
-            ui_defaults.substeps_per_frame,
-            |step_ui| {
-                sanitize_int_range(
-                    step_ui.substeps_per_frame,
-                    ui_defaults.substeps_per_frame,
-                    source_name,
-                    "ui.step.substeps_per_frame",
-                    &mut warnings,
-                )
-            },
-        ),
         oscillation_amplitude: amplitude_range,
         oscillation_frequency: frequency_range,
         divider_height: divider_height_range,
@@ -523,16 +497,6 @@ fn convert_raw_config(raw: RawRoot, source_name: &str) -> LoadedConfig {
             |v| v > 0.0,
         ),
     };
-    let settings = SimulationSettings {
-        substeps_per_frame: sanitize_u32(
-            raw.simulation.step.substeps_per_frame,
-            defaults.settings.substeps_per_frame,
-            source_name,
-            "simulation.step.substeps_per_frame",
-            &mut warnings,
-            |v| v > 0,
-        ),
-    };
     let physics = PhysicsConstants {
         gravity: sanitize_vec3(
             raw.simulation.gravity,
@@ -632,7 +596,6 @@ fn convert_raw_config(raw: RawRoot, source_name: &str) -> LoadedConfig {
     simulation.set_container(container);
     simulation.oscillation = oscillation;
     simulation.time = time;
-    simulation.settings = settings;
     simulation.physics = physics;
     simulation.material = material;
     simulation.wall = wall;
@@ -684,13 +647,6 @@ fn convert_raw_config(raw: RawRoot, source_name: &str) -> LoadedConfig {
         ui_ranges.wall_friction,
         source_name,
         "simulation.container.material.friction",
-        &mut warnings,
-    );
-    simulation.settings.substeps_per_frame = clamp_u32_into_range(
-        simulation.settings.substeps_per_frame,
-        ui_ranges.substeps_per_frame,
-        source_name,
-        "simulation.step.substeps_per_frame",
         &mut warnings,
     );
 
@@ -871,57 +827,6 @@ fn sanitize_slider_range(
     UiSliderRange { min, max, step }
 }
 
-fn sanitize_int_range(
-    raw: RawUiIntRange,
-    default: UiIntRange,
-    source_name: &str,
-    key: &str,
-    warnings: &mut Vec<String>,
-) -> UiIntRange {
-    let min = sanitize_u32(
-        raw.min,
-        default.min,
-        source_name,
-        &format!("{key}.min"),
-        warnings,
-        |v| v > 0,
-    );
-    let max = sanitize_u32(
-        raw.max,
-        default.max,
-        source_name,
-        &format!("{key}.max"),
-        warnings,
-        |v| v > 0,
-    );
-    let mut step = sanitize_u32(
-        raw.step,
-        default.step,
-        source_name,
-        &format!("{key}.step"),
-        warnings,
-        |v| v > 0,
-    );
-
-    if min > max {
-        warnings.push(format!(
-            "{source_name}: invalid range `{key}` (min > max), using default [{}, {}] step {}",
-            default.min, default.max, default.step
-        ));
-        return default;
-    }
-
-    let width = max - min + 1;
-    if step > width {
-        warnings.push(format!(
-            "{source_name}: invalid `{key}.step`={step}, clamping to range width {width}"
-        ));
-        step = width.max(1);
-    }
-
-    UiIntRange { min, max, step }
-}
-
 fn clamp_into_range(
     value: f32,
     range: UiSliderRange,
@@ -929,24 +834,6 @@ fn clamp_into_range(
     key: &str,
     warnings: &mut Vec<String>,
 ) -> f32 {
-    if value < range.min || value > range.max {
-        warnings.push(format!(
-            "{source_name}: `{key}`={value} is outside UI range [{}, {}], clamped",
-            range.min, range.max
-        ));
-        value.clamp(range.min, range.max)
-    } else {
-        value
-    }
-}
-
-fn clamp_u32_into_range(
-    value: u32,
-    range: UiIntRange,
-    source_name: &str,
-    key: &str,
-    warnings: &mut Vec<String>,
-) -> u32 {
     if value < range.min || value > range.max {
         warnings.push(format!(
             "{source_name}: `{key}`={value} is outside UI range [{}, {}], clamped",
@@ -1174,7 +1061,6 @@ frequency = -1.0
 
 [simulation.step]
 dt = -0.1
-substeps_per_frame = 0
 
 [ui.oscillation.amplitude]
 min = 2000.0
@@ -1185,11 +1071,6 @@ step = -1000.0
 min = 1.0
 max = 10.0
 step = 100.0
-
-[ui.step.substeps_per_frame]
-min = 20
-max = 1
-step = 0
 
 [ui.container.divider_height]
 min = 1000.0

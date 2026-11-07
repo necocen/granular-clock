@@ -12,7 +12,7 @@ pub use oscillation::{
     OscillationParams, advance_oscillation, advance_oscillation_phase, oscillation_displacement,
 };
 pub use physics::{GridSettings, MaterialProperties, PhysicsConstants, WallProperties};
-pub use time::{PhysicsBackend, SimulationSettings, SimulationTimeParams};
+pub use time::{PhysicsBackend, SimulationTimeParams};
 
 /// UI スライダーのレンジ定義
 #[derive(Clone, Copy, Debug)]
@@ -22,18 +22,9 @@ pub struct UiSliderRange {
     pub step: f32,
 }
 
-/// UI 整数スライダーのレンジ定義
-#[derive(Clone, Copy, Debug)]
-pub struct UiIntRange {
-    pub min: u32,
-    pub max: u32,
-    pub step: u32,
-}
-
 /// UI で変更可能な値のレンジ設定
 #[derive(Clone, Copy, Debug)]
 pub struct UiControlRanges {
-    pub substeps_per_frame: UiIntRange,
     pub oscillation_amplitude: UiSliderRange,
     pub oscillation_frequency: UiSliderRange,
     pub divider_height: UiSliderRange,
@@ -50,11 +41,6 @@ impl Default for UiControlRanges {
         let divider_max = (container_height - 0.03).max(divider_min + 0.001);
 
         Self {
-            substeps_per_frame: UiIntRange {
-                min: 1,
-                max: 20,
-                step: 1,
-            },
             oscillation_amplitude: UiSliderRange {
                 min: 0.001,
                 max: 0.1,
@@ -104,7 +90,6 @@ pub struct SimulationConstants {
     pub container: ContainerParams,
     pub oscillation: OscillationParams,
     pub time: SimulationTimeParams,
-    pub settings: SimulationSettings,
     pub physics: PhysicsConstants,
     pub material: MaterialProperties,
     pub wall: WallProperties,
@@ -118,7 +103,6 @@ impl Default for SimulationConstants {
             ContainerParams::default(),
             OscillationParams::default(),
             SimulationTimeParams::default(),
-            SimulationSettings::default(),
             PhysicsConstants::default(),
             MaterialProperties::default(),
             WallProperties::default(),
@@ -127,13 +111,11 @@ impl Default for SimulationConstants {
 }
 
 impl SimulationConstants {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         particle: SimulationConfig,
         container: ContainerParams,
         oscillation: OscillationParams,
         time: SimulationTimeParams,
-        settings: SimulationSettings,
         physics: PhysicsConstants,
         material: MaterialProperties,
         wall: WallProperties,
@@ -145,7 +127,6 @@ impl SimulationConstants {
             container,
             oscillation,
             time,
-            settings,
             physics,
             material,
             wall,

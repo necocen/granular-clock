@@ -77,11 +77,28 @@ shadow support use unshadowed lighting and report a warning.
 ### UI (top-right panel)
 
 - Switch physics backend: `GPU` / `CPU`
-- Adjust `Substeps / Frame`
 - Toggle oscillation and adjust amplitude/frequency
 - Adjust divider height
 - Adjust particle/wall contact parameters
 - `Pause` / `Resume`, `Reset`
+
+Physics ticks use a fixed clock, while mikage 0.9's VSync presentation policy
+updates the display independently. On native builds, surface acquisition runs
+on a worker so physics can continue while waiting for the next frame.
+Simulation time is limited to real time; slower hardware runs below 1x.
+Each fixed tick performs one physics step of duration `simulation.step.dt`.
+Catch-up work is bounded to four ticks
+(1.6 ms with the default `dt = 0.0004`), so a stall or pause cannot build an
+unlimited backlog. There is no adjustable substep cap.
+
+Particle-to-instance conversion and display readback run during rendering,
+instead of every physics tick.
+Redraw requests coalesce until a frame is available, without a fixed frame-rate
+cap or a fixed number of physics steps per frame.
+
+`Speed` shows recent simulation seconds per real second, for example `0.30x`.
+FPS and steps/s are measured from elapsed time and actual progress, including
+frames where the simulation does not advance.
 
 ## References
 

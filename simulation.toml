@@ -54,10 +54,8 @@ frequency = 23.0
 
 # Integration step settings.
 [simulation.step]
-# Substep time interval [s]
+# Fixed simulation tick and physics step interval [s]
 dt = 0.0004
-# Number of physics substeps per rendered frame
-substeps_per_frame = 10
 
 # UI slider ranges for runtime controls.
 [ui.oscillation]
@@ -65,16 +63,13 @@ substeps_per_frame = 10
 amplitude = { min = 1.0, max = 120.0, step = 1.0 }
 frequency = { min = 1.0, max = 50.0, step = 1.0 }
 
-[ui.step]
-substeps_per_frame = { min = 1, max = 20, step = 1 }
-
 [ui.container]
 # Divider height range and step [mm]
 divider_height = { min = 30.0, max = 470.0, step = 1.0 }
 
 [ui.camera]
 # Camera position and target [mm]
-position = [300.0, 150.0, 750.0]
+position = [270.0, 120.0, 675.0]
 # Camera look-at target [mm].
 target = [0.0, -150.0, 0.0]
 
