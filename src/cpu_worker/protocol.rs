@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::physics::ParticleStore;
-use crate::simulation::{constants::SimulationConstants, state::SimulationState};
+#[cfg(any(target_family = "wasm", test))]
+use crate::simulation::constants::SimulationConstants;
+use crate::simulation::state::SimulationState;
 
 /// The loader sends this only after WASM has installed its message handler.
 #[cfg(target_family = "wasm")]
@@ -9,6 +11,7 @@ pub const WORKER_READY: &str = "granular-clock-cpu-v1";
 pub const MAX_STEPS_PER_REQUEST: u32 = 4;
 
 #[derive(Serialize, Deserialize)]
+#[cfg(any(target_family = "wasm", test))]
 pub enum WorkerRequest {
     Initialize {
         constants: SimulationConstants,
@@ -22,6 +25,7 @@ pub enum WorkerRequest {
 }
 
 #[derive(Serialize, Deserialize)]
+#[cfg(any(target_family = "wasm", test))]
 pub enum WorkerResponse {
     Snapshot(CpuSnapshot),
     Error(String),

@@ -41,9 +41,7 @@ pub struct GranularClockApp {
     contact_history: ContactHistory,
     #[cfg(not(target_family = "wasm"))]
     spatial_hash: SpatialHashGrid,
-    #[cfg(target_family = "wasm")]
     cpu_worker: granular_clock::cpu_worker::CpuWorkerController,
-    #[cfg(target_family = "wasm")]
     simulation_control: Option<mikage::SimulationControl>,
     backend: PhysicsBackend,
     /// Backend currently owning particle state; UI requests can await a GPU readback.
@@ -141,9 +139,7 @@ impl GranularClockApp {
             contact_history: ContactHistory::default(),
             #[cfg(not(target_family = "wasm"))]
             spatial_hash,
-            #[cfg(target_family = "wasm")]
             cpu_worker: Default::default(),
-            #[cfg(target_family = "wasm")]
             simulation_control: None,
             backend: PhysicsBackend::Gpu,
             active_backend: PhysicsBackend::Gpu,
@@ -263,7 +259,6 @@ impl GranularClockApp {
             return;
         }
         self.sim_state.reset_requested = false;
-        #[cfg(target_family = "wasm")]
         self.cpu_worker.reset();
         self.sim_state.reset_time();
         self.distribution_history.clear();
@@ -292,15 +287,12 @@ impl GranularClockApp {
         }
 
         if self.backend == PhysicsBackend::Gpu {
-            #[cfg(target_family = "wasm")]
-            {
-                // Finish the one outstanding CPU request before uploading to GPU.
-                // Rendering continues from the last snapshot while it completes.
-                if self.cpu_worker.is_advancing() {
-                    return false;
-                }
-                self.cpu_worker.reset();
+            // Finish the outstanding CPU work and consume its final snapshot
+            // before uploading to GPU. Rendering need not wait for that work.
+            if self.cpu_worker.is_advancing() {
+                return false;
             }
+            self.cpu_worker.reset();
             self.gpu_particles_uploaded = false;
             self.active_backend = self.backend;
             return true;
@@ -341,9 +333,17 @@ impl GranularClockApp {
         true
     }
 
+    fn uses_cpu_worker(&self) -> bool {
+        // Native headless callers explicitly advance exact fixed ticks. Window
+        // runners provide SimulationControl and use the independent worker.
+        cfg!(target_family = "wasm") || self.simulation_control.is_some()
+    }
+
     /// Keep worker commands responsive even while automatic ticks are paused.
-    #[cfg(target_family = "wasm")]
     fn synchronize_cpu_worker(&mut self) {
+        if !self.uses_cpu_worker() {
+            return;
+        }
         let worker_owns_simulation =
             self.active_backend == PhysicsBackend::Cpu && self.backend == PhysicsBackend::Cpu;
         if worker_owns_simulation && !self.sim_state.reset_requested {
@@ -387,12 +387,10 @@ impl GranularClockApp {
 impl mikage::App for GranularClockApp {
     type Camera = mikage::OrbitCamera;
 
-    #[cfg(target_family = "wasm")]
     fn set_redraw_request(&mut self, request: mikage::RedrawRequest) {
         self.cpu_worker.set_redraw_request(request);
     }
 
-    #[cfg(target_family = "wasm")]
     fn set_simulation_control(&mut self, control: mikage::SimulationControl) {
         self.simulation_control = Some(control);
     }
@@ -401,13 +399,10 @@ impl mikage::App for GranularClockApp {
         // Handle reset request (from UI)
         self.handle_reset();
 
-        #[cfg(target_family = "wasm")]
-        {
-            self.cpu_worker
-                .poll(&mut self.particle_store, &mut self.sim_state);
-            if self.backend != PhysicsBackend::Cpu {
-                self.cpu_worker.stop_requests();
-            }
+        self.cpu_worker
+            .poll(&mut self.particle_store, &mut self.sim_state);
+        if self.backend != PhysicsBackend::Cpu {
+            self.cpu_worker.stop_requests();
         }
 
         if !self.synchronize_backend(ctx) {
@@ -416,15 +411,17 @@ impl mikage::App for GranularClockApp {
 
         match self.active_backend {
             PhysicsBackend::Cpu => {
-                // Native execution advances one physical step per scheduler tick.
+                // Headless callers retain one physical step per explicit tick.
                 #[cfg(not(target_family = "wasm"))]
-                run_physics_step_plain(
-                    &self.constants,
-                    &mut self.particle_store,
-                    &mut self.contact_history,
-                    &mut self.sim_state,
-                    &mut self.spatial_hash,
-                );
+                if !self.uses_cpu_worker() {
+                    run_physics_step_plain(
+                        &self.constants,
+                        &mut self.particle_store,
+                        &mut self.contact_history,
+                        &mut self.sim_state,
+                        &mut self.spatial_hash,
+                    );
+                }
             }
             PhysicsBackend::Gpu => {
                 // Check if we need to upload particles (initial or after reset)
@@ -463,13 +460,11 @@ impl mikage::App for GranularClockApp {
                 }
             }
         }
-        #[cfg(target_family = "wasm")]
         self.synchronize_cpu_worker();
     }
 
     fn prepare_render(&mut self, ctx: &mut mikage::RenderUpdateContext<mikage::OrbitCamera>) {
-        #[cfg(target_family = "wasm")]
-        {
+        if self.uses_cpu_worker() {
             // GUI runs before this hook. Reset must discard the old session
             // before a queued result can overwrite newly spawned particles.
             self.handle_reset();
@@ -613,10 +608,7 @@ impl mikage::App for GranularClockApp {
 
     fn gui(&mut self, ui: &mut egui::Ui) {
         let egui_ctx = ui.ctx();
-        #[cfg(target_family = "wasm")]
         let cpu_error = self.cpu_worker.error_message();
-        #[cfg(not(target_family = "wasm"))]
-        let cpu_error = None;
         draw_control_panel(
             egui_ctx,
             &self.perf_display,
@@ -628,8 +620,11 @@ impl mikage::App for GranularClockApp {
         );
 
         draw_distribution_panel(egui_ctx, &self.distribution, &self.distribution_history);
-        #[cfg(target_family = "wasm")]
         self.synchronize_cpu_worker();
+    }
+
+    fn shutdown(&mut self, _gpu: &mikage::GpuContext) {
+        self.cpu_worker.reset();
     }
 
     fn resize(&mut self, ctx: &mikage::GpuContext, new_size: PhysicalSize<u32>) {
