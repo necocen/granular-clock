@@ -5,7 +5,7 @@ use crate::simulation::state::SimulationState;
 const TWO_PI: f32 = 2.0 * PI;
 
 /// 振動パラメータ
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct OscillationParams {
     /// 振幅 (m)
     pub amplitude: f32,

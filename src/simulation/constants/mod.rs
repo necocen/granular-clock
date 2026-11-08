@@ -84,7 +84,7 @@ impl Default for UiControlRanges {
 ///
 /// これを Main World の単一リソースとして管理し、
 /// CPU/GPU/Rendering/UI から参照する。
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct SimulationConstants {
     pub particle: SimulationConfig,
     pub container: ContainerParams,

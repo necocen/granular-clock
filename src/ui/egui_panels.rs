@@ -224,6 +224,7 @@ pub fn draw_control_panel(
     ui_ranges: &UiControlRanges,
     backend: &mut PhysicsBackend,
     sim_state: &mut SimulationState,
+    cpu_error: Option<&str>,
 ) {
     let layout = ui_layout_profile(ctx);
 
@@ -244,6 +245,9 @@ pub fn draw_control_panel(
         })
         .show(ctx, |ui| {
             ui.spacing_mut().item_spacing = layout.item_spacing;
+            if let Some(message) = cpu_error {
+                ui.colored_label(egui::Color32::LIGHT_RED, message);
+            }
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
                     ui.label(
@@ -530,7 +534,7 @@ mod tests {
         let mut backend = PhysicsBackend::Gpu;
         let mut state = SimulationState::default();
         for frame in 0..4 {
-            let output = ctx.run_pass(
+            let mut output = ctx.run_pass(
                 egui::RawInput {
                     time: Some(f64::from(frame)),
                     screen_rect: Some(egui::Rect::from_min_size(
@@ -547,9 +551,11 @@ mod tests {
                         &ranges,
                         &mut backend,
                         &mut state,
+                        None,
                     );
                 },
             );
+            output.textures_delta.clear();
             assert_eq!(performance, recorded);
             // egui hides a new window's initial sizing pass. Subsequent frames
             // are visible, and the deterministic time also completes fade-in.
@@ -574,9 +580,10 @@ mod tests {
         value_m: &mut f32,
     ) -> (egui::Response, egui::FullOutput) {
         let mut response = None;
-        let output = ctx.run_ui(input, |ui| {
+        let mut output = ctx.run_ui(input, |ui| {
             response = Some(length_slider(ui, value_m, 0.001..=0.12, 0.001, "Amplitude"));
         });
+        output.textures_delta.clear();
         (response.unwrap(), output)
     }
 

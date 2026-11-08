@@ -1,7 +1,7 @@
 use mikage::glam::Vec3;
 
 /// コンテナの不変パラメータ
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct ContainerParams {
     /// 箱の半分のサイズ
     pub half_extents: Vec3,

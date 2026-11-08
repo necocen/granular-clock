@@ -1,5 +1,5 @@
 /// シミュレーションの設定
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct SimulationConfig {
     /// 大粒子の半径
     pub large_radius: f32,
