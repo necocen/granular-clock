@@ -4,12 +4,12 @@
 /assets/shaders/*.wgsl
     Content-Type: text/wgsl
 
-# Trunk workers use stable filenames rather than content hashes.
+# Trunk workers use stable filenames; never retain a previous build's glue.
 /cpu-worker_loader.js
-  Cache-Control: no-cache, must-revalidate
+  Cache-Control: no-store
 
 /cpu-worker.js
-  Cache-Control: no-cache, must-revalidate
+  Cache-Control: no-store
 
 /cpu-worker_bg.wasm
-  Cache-Control: no-cache, must-revalidate
+  Cache-Control: no-store
