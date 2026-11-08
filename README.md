@@ -86,22 +86,22 @@ Physics ticks use a fixed clock, while mikage 0.9's VSync presentation policy
 updates the display independently. On native builds, surface acquisition runs
 on a worker so physics can continue while waiting for the next frame.
 Simulation time is limited to real time; slower hardware runs below 1x.
-GPU mode and native CPU mode perform one physics step of duration
-`simulation.step.dt` per fixed tick.
+GPU mode performs one physics step of duration `simulation.step.dt` per fixed tick.
 Catch-up work is bounded to four ticks
 (1.6 ms with the default `dt = 0.0004`), so a stall or pause cannot build an
 unlimited backlog. There is no adjustable substep cap.
 
-In the browser, CPU physics runs in a dedicated Web Worker. Rendering uses the
-latest completed snapshot without waiting for computation. Only one request is
-in flight, with at most four fixed steps per request and an 8 ms work budget
-checked between steps. Worker replies schedule subsequent work independently
-of rendering. mikage's automatic ticks are suspended in CPU Worker mode to avoid
-empty GPU submissions, and resumed for GPU mode.
-Pause stops new requests; Reset replaces the worker.
-Switching back to GPU finishes any in-flight request before transferring state.
-If the worker fails to load or run, the simulation pauses and offers Reset or GPU
-mode as recovery options.
+CPU physics runs in a dedicated native thread or browser Web Worker. Rendering
+uses the latest completed snapshot without waiting for computation. A single
+worker advances at most four fixed steps per batch, with an 8 ms work budget
+checked between steps. It schedules subsequent work independently of rendering
+and keeps at most one completed snapshot. mikage's automatic ticks are suspended
+in CPU mode to avoid empty GPU submissions, and resumed for GPU mode.
+Pause stops new work; Reset discards the previous simulation session without
+waiting for its computation. Switching back to GPU finishes outstanding CPU
+work and transfers its latest state. Worker failure pauses the simulation and
+offers Reset or GPU mode as recovery options. Native headless callers retain
+one CPU step per explicit tick for deterministic batch execution.
 
 Particle-to-instance conversion and display readback run during rendering,
 instead of every physics tick. Switching from GPU to CPU waits for a fresh
