@@ -78,9 +78,19 @@
     <link
         data-trunk
         rel="rust"
+        data-bin="granular-clock"
         data-type="main"
         data-wasm-opt="z"
         data-no-default-features
+    />
+    <link
+        data-trunk
+        rel="rust"
+        data-bin="cpu-worker"
+        data-type="worker"
+        data-loader-shim
+        data-bindgen-target="web"
+        data-wasm-opt="z"
     />
     <link data-trunk rel="copy-dir" href="assets" />
     <link data-trunk rel="copy-file" href="_headers" />

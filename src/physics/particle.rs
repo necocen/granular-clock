@@ -2,14 +2,14 @@ use mikage::glam::Vec3;
 use std::f32::consts::PI;
 
 /// 粒子のサイズ区分（大/小）
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ParticleSize {
     Large,
     Small,
 }
 
 /// 個別パーティクルのデータ（旧 ECS コンポーネントを統合）
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Particle {
     pub position: Vec3,
     pub velocity: Vec3,
@@ -42,7 +42,7 @@ impl Particle {
 }
 
 /// 全パーティクルを Vec で管理するリソース
-#[derive(Default)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ParticleStore {
     pub particles: Vec<Particle>,
     /// spawn/clear 操作でインクリメントされる世代番号。

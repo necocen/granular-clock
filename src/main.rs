@@ -1,9 +1,8 @@
 mod analysis;
 mod app;
-mod physics;
-mod rendering;
-mod simulation;
 mod ui;
+
+use granular_clock::{physics, rendering, simulation};
 
 #[cfg(not(target_family = "wasm"))]
 use clap::Parser;

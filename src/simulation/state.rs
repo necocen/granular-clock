@@ -1,5 +1,5 @@
 /// シミュレーションの状態
-#[derive(Default)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct SimulationState {
     /// 一時停止中かどうか
     pub paused: bool,

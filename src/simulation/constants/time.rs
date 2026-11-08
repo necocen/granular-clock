@@ -9,7 +9,7 @@ pub enum PhysicsBackend {
 }
 
 /// シミュレーション時間の不変パラメータ
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct SimulationTimeParams {
     /// 固定タイムステップ（秒）
     pub dt: f32,
